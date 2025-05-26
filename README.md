@@ -270,21 +270,6 @@ Bundle 提供以下路由：
 - `POST /idle-lock/unlock` - 处理解锁验证
 - `GET /idle-lock/status` - 获取锁定状态（AJAX）
 
-## 配置选项
-
-目前 Bundle 使用默认配置，未来版本将支持更多配置选项：
-
-```yaml
-# config/packages/idle_lock_screen.yaml (计划中)
-idle_lock_screen:
-    default_timeout: 60
-    check_interval: 1000
-    debounce_delay: 300
-    excluded_routes:
-        - '_profiler'
-        - '_wdt'
-```
-
 ## 安全考虑
 
 1. **密码验证**：确保实现安全的密码验证逻辑
