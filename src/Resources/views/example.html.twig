@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>示例页面 - 无操作锁定演示</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .header {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .status {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        .content {
+            background: white;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .alert {
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+        }
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .alert-warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>无操作锁定功能演示</h1>
+        <p>这是一个演示页面，展示如何在现有模板中集成无操作锁定功能。</p>
+    </div>
+
+    <div class="status">
+        <h3>当前状态</h3>
+        {% if is_idle_lock_enabled() %}
+            <div class="alert alert-info">
+                ✅ 无操作锁定已启用<br>
+                超时时间: {{ idle_lock_timeout() }} 秒
+            </div>
+        {% else %}
+            <div class="alert alert-warning">
+                ⚠️ 当前路由未启用无操作锁定
+            </div>
+        {% endif %}
+    </div>
+
+    <div class="content">
+        <h2>如何在您的模板中集成</h2>
+        
+        <h3>1. 在模板底部添加脚本</h3>
+        <p>在您的基础模板（如 base.html.twig）的 &lt;/body&gt; 标签前添加：</p>
+        <pre><code>{{ "{{ idle_lock_script() }}" }}</code></pre>
+
+        <h3>2. 检查锁定状态（可选）</h3>
+        <p>您可以在模板中检查当前页面是否启用了锁定：</p>
+        <pre><code>{{ "{% if is_idle_lock_enabled() %}" }}
+    &lt;div class="lock-notice"&gt;
+        此页面启用了无操作锁定，超时时间：{{ "{{ idle_lock_timeout() }}" }} 秒
+    &lt;/div&gt;
+{{ "{% endif %}" }}</code></pre>
+
+        <h3>3. 自定义样式（可选）</h3>
+        <p>您可以通过 CSS 自定义锁定页面的样式，或者创建自己的锁定页面模板。</p>
+
+        <h3>4. 配置锁定规则</h3>
+        <p>通过后台管理界面或直接操作数据库来配置哪些路由需要启用无操作锁定。</p>
+
+        <h4>示例配置：</h4>
+        <ul>
+            <li><code>/billing/*</code> - 所有账单相关页面</li>
+            <li><code>/account/sensitive</code> - 特定敏感页面</li>
+            <li><code>^/admin/.*</code> - 所有管理后台页面（正则表达式）</li>
+        </ul>
+    </div>
+
+    <!-- 这里是关键：在页面底部添加无操作锁定脚本 -->
+    {{ idle_lock_script() }}
+
+    <script>
+        // 演示：显示当前锁定状态
+        if (window.IdleLock) {
+            console.log('IdleLock 已初始化');
+            
+            // 可以通过 JavaScript 检查锁定状态
+            setInterval(function() {
+                if (window.IdleLock.isLocked && window.IdleLock.isLocked()) {
+                    console.log('会话已被锁定');
+                }
+            }, 5000);
+        }
+    </script>
+</body>
+</html>

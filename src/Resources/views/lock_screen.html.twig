@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>会话已锁定 - 请输入密码</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #333;
+        }
+
+        .lock-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+
+        .lock-icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 20px;
+            background: #f8f9fa;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 36px;
+            color: #6c757d;
+        }
+
+        .lock-title {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #2c3e50;
+        }
+
+        .lock-subtitle {
+            font-size: 14px;
+            color: #6c757d;
+            margin-bottom: 30px;
+            line-height: 1.5;
+        }
+
+        .lock-form {
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 8px;
+            color: #495057;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+
+        .btn:hover {
+            background: #5a6fd8;
+        }
+
+        .btn:active {
+            transform: translateY(1px);
+        }
+
+        .alert {
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .lock-info {
+            font-size: 12px;
+            color: #6c757d;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #e9ecef;
+        }
+
+        .lock-time {
+            font-weight: 500;
+            color: #495057;
+        }
+
+        @media (max-width: 480px) {
+            .lock-container {
+                margin: 20px;
+                padding: 30px 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="lock-container">
+        <div class="lock-icon">
+            🔒
+        </div>
+        
+        <h1 class="lock-title">会话已锁定</h1>
+        <p class="lock-subtitle">
+            由于长时间无操作，您的会话已被锁定。<br>
+            请输入密码以继续访问。
+        </p>
+
+        {% for message in app.flashes('error') %}
+            <div class="alert alert-error">
+                {{ message }}
+            </div>
+        {% endfor %}
+
+        <form method="post" action="{{ path('idle_lock_unlock') }}" class="lock-form">
+            <div class="form-group">
+                <label for="password" class="form-label">密码</label>
+                <input 
+                    type="password" 
+                    id="password" 
+                    name="password" 
+                    class="form-input" 
+                    placeholder="请输入您的密码"
+                    required
+                    autofocus
+                >
+            </div>
+
+            <input type="hidden" name="redirect_url" value="{{ redirect_url }}">
+            
+            <button type="submit" class="btn">
+                解锁并继续
+            </button>
+        </form>
+
+        <div class="lock-info">
+            {% if locked_route %}
+                <div>锁定页面: <span class="lock-time">{{ locked_route }}</span></div>
+            {% endif %}
+            {% if lock_time %}
+                <div>锁定时间: <span class="lock-time">{{ lock_time|date('Y-m-d H:i:s') }}</span></div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        // 防止页面被缓存
+        window.addEventListener('pageshow', function(event) {
+            if (event.persisted) {
+                window.location.reload();
+            }
+        });
+
+        // 自动聚焦密码输入框
+        document.addEventListener('DOMContentLoaded', function() {
+            const passwordInput = document.getElementById('password');
+            if (passwordInput) {
+                passwordInput.focus();
+            }
+        });
+
+        // 回车键提交表单
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Enter') {
+                const form = document.querySelector('.lock-form');
+                if (form) {
+                    form.submit();
+                }
+            }
+        });
+    </script>
+</body>
+</html>
