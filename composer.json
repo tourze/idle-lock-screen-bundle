@@ -19,6 +19,7 @@
     "symfony/http-kernel": "^6.4",
     "symfony/routing": "^6.4",
     "symfony/security-bundle": "^6.4",
+    "symfony/security-core": "^6.4",
     "symfony/yaml": "^6.4 || ^7.1",
     "twig/twig": "^3.13|^4.0"
   },

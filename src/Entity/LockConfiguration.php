@@ -11,14 +11,14 @@ use Doctrine\ORM\Mapping as ORM;
  */
 #[ORM\Entity]
 #[ORM\Table(name: 'idle_lock_configuration')]
-#[ORM\Index(columns: ['route_pattern'], name: 'idx_route_pattern')]
-#[ORM\Index(columns: ['is_enabled'], name: 'idx_is_enabled')]
+#[ORM\Index(name: 'idx_route_pattern', columns: ['route_pattern'])]
+#[ORM\Index(name: 'idx_is_enabled', columns: ['is_enabled'])]
 class LockConfiguration
 {
     #[ORM\Id]
     #[ORM\GeneratedValue]
     #[ORM\Column(type: Types::INTEGER)]
-    private readonly int $id;
+    private ?int $id = null;
 
     /**
      * 路由模式，支持通配符和正则表达式
@@ -63,7 +63,7 @@ class LockConfiguration
         $this->updatedAt = new \DateTimeImmutable();
     }
 
-    public function getId(): int
+    public function getId(): ?int
     {
         return $this->id;
     }

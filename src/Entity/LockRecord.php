@@ -26,7 +26,7 @@ class LockRecord
     #[ORM\Id]
     #[ORM\GeneratedValue]
     #[ORM\Column(type: Types::INTEGER)]
-    private readonly int $id;
+    private ?int $id = null;
 
     /**
      * 用户ID
@@ -81,7 +81,7 @@ class LockRecord
         $this->createdAt = new \DateTimeImmutable();
     }
 
-    public function getId(): int
+    public function getId(): ?int
     {
         return $this->id;
     }
