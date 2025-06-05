@@ -4,6 +4,8 @@ namespace Tourze\IdleLockScreenBundle\Entity;
 
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\Mapping as ORM;
+use Symfony\Component\Security\Core\User\UserInterface;
+use Tourze\IdleLockScreenBundle\Enum\ActionType;
 
 /**
  * 锁定记录实体
@@ -11,28 +13,24 @@ use Doctrine\ORM\Mapping as ORM;
  */
 #[ORM\Entity]
 #[ORM\Table(name: 'idle_lock_record')]
-#[ORM\Index(columns: ['user_id'], name: 'idx_user_id')]
-#[ORM\Index(columns: ['session_id'], name: 'idx_session_id')]
-#[ORM\Index(columns: ['action_type'], name: 'idx_action_type')]
-#[ORM\Index(columns: ['created_at'], name: 'idx_created_at')]
-#[ORM\Index(columns: ['user_id', 'session_id'], name: 'idx_user_session')]
+#[ORM\Index(name: 'idx_user_id', columns: ['user_id'])]
+#[ORM\Index(name: 'idx_session_id', columns: ['session_id'])]
+#[ORM\Index(name: 'idx_action_type', columns: ['action_type'])]
+#[ORM\Index(name: 'idx_created_at', columns: ['created_at'])]
+#[ORM\Index(name: 'idx_user_session', columns: ['user_id', 'session_id'])]
 class LockRecord
 {
-    public const ACTION_LOCKED = 'locked';
-    public const ACTION_UNLOCKED = 'unlocked';
-    public const ACTION_TIMEOUT = 'timeout';
-    public const ACTION_BYPASS_ATTEMPT = 'bypass_attempt';
-
     #[ORM\Id]
     #[ORM\GeneratedValue]
     #[ORM\Column(type: Types::INTEGER)]
     private ?int $id = null;
 
     /**
-     * 用户ID
+     * 关联用户
      */
-    #[ORM\Column(type: Types::INTEGER, nullable: true)]
-    private ?int $userId = null;
+    #[ORM\ManyToOne(targetEntity: UserInterface::class)]
+    #[ORM\JoinColumn(name: 'user_id', referencedColumnName: 'id', nullable: true)]
+    private ?UserInterface $user = null;
 
     /**
      * 会话ID
@@ -41,10 +39,10 @@ class LockRecord
     private string $sessionId;
 
     /**
-     * 操作类型：locked, unlocked, timeout, bypass_attempt
+     * 操作类型枚举
      */
-    #[ORM\Column(type: Types::STRING, length: 20)]
-    private string $actionType;
+    #[ORM\Column(type: Types::STRING, length: 20, enumType: ActionType::class)]
+    private ActionType $actionType;
 
     /**
      * 触发锁定的路由
@@ -86,14 +84,45 @@ class LockRecord
         return $this->id;
     }
 
-    public function getUserId(): ?int
+    public function getUser(): ?UserInterface
     {
-        return $this->userId;
+        return $this->user;
     }
 
+    public function setUser(?UserInterface $user): self
+    {
+        $this->user = $user;
+        return $this;
+    }
+
+    /**
+     * 获取用户ID（兼容性方法）
+     */
+    public function getUserId(): ?int
+    {
+        if ($this->user === null) {
+            return null;
+        }
+
+        // 尝试获取用户ID，支持不同的用户实现
+        if (method_exists($this->user, 'getId')) {
+            $id = call_user_func([$this->user, 'getId']);
+            return is_int($id) ? $id : (is_numeric($id) ? (int) $id : null);
+        }
+
+        // 如果用户实现了 getUserIdentifier，尝试将其转换为数字
+        $identifier = $this->user->getUserIdentifier();
+        return is_numeric($identifier) ? (int) $identifier : null;
+    }
+
+    /**
+     * 设置用户ID（兼容性方法，已废弃）
+     * @deprecated 请使用 setUser() 方法
+     */
     public function setUserId(?int $userId): self
     {
-        $this->userId = $userId;
+        // 为了向后兼容，保留此方法，但不做任何操作
+        // 实际设置用户应该通过 setUser() 方法
         return $this;
     }
 
@@ -108,12 +137,12 @@ class LockRecord
         return $this;
     }
 
-    public function getActionType(): string
+    public function getActionType(): ActionType
     {
         return $this->actionType;
     }
 
-    public function setActionType(string $actionType): self
+    public function setActionType(ActionType $actionType): self
     {
         $this->actionType = $actionType;
         return $this;
@@ -170,21 +199,21 @@ class LockRecord
 
     public function isLockAction(): bool
     {
-        return $this->actionType === self::ACTION_LOCKED;
+        return $this->actionType === ActionType::LOCKED;
     }
 
     public function isUnlockAction(): bool
     {
-        return $this->actionType === self::ACTION_UNLOCKED;
+        return $this->actionType === ActionType::UNLOCKED;
     }
 
     public function isTimeoutAction(): bool
     {
-        return $this->actionType === self::ACTION_TIMEOUT;
+        return $this->actionType === ActionType::TIMEOUT;
     }
 
     public function isBypassAttempt(): bool
     {
-        return $this->actionType === self::ACTION_BYPASS_ATTEMPT;
+        return $this->actionType === ActionType::BYPASS_ATTEMPT;
     }
 }

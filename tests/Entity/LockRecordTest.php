@@ -3,7 +3,38 @@
 namespace Tourze\IdleLockScreenBundle\Tests\Entity;
 
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\Security\Core\User\UserInterface;
 use Tourze\IdleLockScreenBundle\Entity\LockRecord;
+use Tourze\IdleLockScreenBundle\Enum\ActionType;
+
+/**
+ * 测试用户类
+ */
+class TestUser implements UserInterface
+{
+    public function __construct(private int $id)
+    {
+    }
+
+    public function getId(): int
+    {
+        return $this->id;
+    }
+
+    public function getUserIdentifier(): string
+    {
+        return (string) $this->id;
+    }
+
+    public function getRoles(): array
+    {
+        return ['ROLE_USER'];
+    }
+
+    public function eraseCredentials(): void
+    {
+    }
+}
 
 /**
  * LockRecord 实体测试
@@ -21,53 +52,112 @@ class LockRecordTest extends TestCase
     {
         $record = new LockRecord();
         
-        $this->assertNull($record->getUserId());
+        $this->assertNull($record->getUser());
         $this->assertInstanceOf(\DateTimeImmutable::class, $record->getCreatedAt());
     }
 
-    public function test_actionTypeConstants_haveCorrectValues(): void
+    public function test_actionTypeEnum_hasCorrectValues(): void
     {
-        $this->assertEquals('locked', LockRecord::ACTION_LOCKED);
-        $this->assertEquals('unlocked', LockRecord::ACTION_UNLOCKED);
-        $this->assertEquals('timeout', LockRecord::ACTION_TIMEOUT);
-        $this->assertEquals('bypass_attempt', LockRecord::ACTION_BYPASS_ATTEMPT);
+        $this->assertEquals('locked', ActionType::LOCKED->value);
+        $this->assertEquals('unlocked', ActionType::UNLOCKED->value);
+        $this->assertEquals('timeout', ActionType::TIMEOUT->value);
+        $this->assertEquals('bypass_attempt', ActionType::BYPASS_ATTEMPT->value);
     }
 
-    public function test_setUserId_withValidId(): void
+    public function test_setUser_withValidUser(): void
     {
-        $userId = 123;
+        $user = new TestUser(123);
         
-        $result = $this->lockRecord->setUserId($userId);
+        $result = $this->lockRecord->setUser($user);
         
         $this->assertSame($this->lockRecord, $result);
-        $this->assertEquals($userId, $this->lockRecord->getUserId());
+        $this->assertSame($user, $this->lockRecord->getUser());
+        $this->assertEquals(123, $this->lockRecord->getUserId());
     }
 
-    public function test_setUserId_withNullValue(): void
+    public function test_setUser_withNullValue(): void
     {
-        // 先设置一个值
-        $this->lockRecord->setUserId(456);
+        // 先设置一个用户
+        $this->lockRecord->setUser(new TestUser(456));
         
-        $result = $this->lockRecord->setUserId(null);
+        $result = $this->lockRecord->setUser(null);
         
         $this->assertSame($this->lockRecord, $result);
+        $this->assertNull($this->lockRecord->getUser());
         $this->assertNull($this->lockRecord->getUserId());
     }
 
-    public function test_setUserId_withZeroValue(): void
+    public function test_getUserId_withUserHavingGetIdMethod(): void
     {
-        $result = $this->lockRecord->setUserId(0);
+        $user = new TestUser(123);
+        $this->lockRecord->setUser($user);
         
-        $this->assertSame($this->lockRecord, $result);
-        $this->assertEquals(0, $this->lockRecord->getUserId());
+        $result = $this->lockRecord->getUserId();
+        
+        $this->assertEquals(123, $result);
     }
 
-    public function test_setUserId_withNegativeValue(): void
+    public function test_getUserId_withUserWithoutGetIdMethod(): void
     {
-        $result = $this->lockRecord->setUserId(-1);
+        $user = new class implements UserInterface {
+            public function getUserIdentifier(): string
+            {
+                return '456';
+            }
+            
+            public function getRoles(): array
+            {
+                return ['ROLE_USER'];
+            }
+            
+            public function eraseCredentials(): void
+            {
+            }
+        };
+        
+        $this->lockRecord->setUser($user);
+        
+        $result = $this->lockRecord->getUserId();
+        
+        $this->assertEquals(456, $result);
+    }
+
+    public function test_getUserId_withNonNumericIdentifier(): void
+    {
+        $user = new class implements UserInterface {
+            public function getUserIdentifier(): string
+            {
+                return 'username';
+            }
+            
+            public function getRoles(): array
+            {
+                return ['ROLE_USER'];
+            }
+            
+            public function eraseCredentials(): void
+            {
+            }
+        };
+        
+        $this->lockRecord->setUser($user);
+        
+        $result = $this->lockRecord->getUserId();
+        
+        $this->assertNull($result);
+    }
+
+    public function test_setUserId_isDeprecated(): void
+    {
+        // 设置用户
+        $user = new TestUser(123);
+        $this->lockRecord->setUser($user);
+        
+        // 调用废弃的方法应该不改变用户
+        $result = $this->lockRecord->setUserId(456);
         
         $this->assertSame($this->lockRecord, $result);
-        $this->assertEquals(-1, $this->lockRecord->getUserId());
+        $this->assertEquals(123, $this->lockRecord->getUserId());
     }
 
     public function test_setSessionId_withValidId(): void
@@ -101,28 +191,18 @@ class LockRecordTest extends TestCase
     public function test_setActionType_withValidTypes(): void
     {
         $actionTypes = [
-            LockRecord::ACTION_LOCKED,
-            LockRecord::ACTION_UNLOCKED,
-            LockRecord::ACTION_TIMEOUT,
-            LockRecord::ACTION_BYPASS_ATTEMPT,
+            ActionType::LOCKED,
+            ActionType::UNLOCKED,
+            ActionType::TIMEOUT,
+            ActionType::BYPASS_ATTEMPT,
         ];
         
         foreach ($actionTypes as $actionType) {
             $result = $this->lockRecord->setActionType($actionType);
             
             $this->assertSame($this->lockRecord, $result);
-            $this->assertEquals($actionType, $this->lockRecord->getActionType());
+            $this->assertSame($actionType, $this->lockRecord->getActionType());
         }
-    }
-
-    public function test_setActionType_withCustomType(): void
-    {
-        $customType = 'custom_action';
-        
-        $result = $this->lockRecord->setActionType($customType);
-        
-        $this->assertSame($this->lockRecord, $result);
-        $this->assertEquals($customType, $this->lockRecord->getActionType());
     }
 
     public function test_setRoute_withValidRoute(): void
@@ -245,7 +325,7 @@ class LockRecordTest extends TestCase
 
     public function test_isLockAction_returnsTrueForLockedAction(): void
     {
-        $this->lockRecord->setActionType(LockRecord::ACTION_LOCKED);
+        $this->lockRecord->setActionType(ActionType::LOCKED);
         
         $this->assertTrue($this->lockRecord->isLockAction());
         $this->assertFalse($this->lockRecord->isUnlockAction());
@@ -255,7 +335,7 @@ class LockRecordTest extends TestCase
 
     public function test_isUnlockAction_returnsTrueForUnlockedAction(): void
     {
-        $this->lockRecord->setActionType(LockRecord::ACTION_UNLOCKED);
+        $this->lockRecord->setActionType(ActionType::UNLOCKED);
         
         $this->assertFalse($this->lockRecord->isLockAction());
         $this->assertTrue($this->lockRecord->isUnlockAction());
@@ -265,7 +345,7 @@ class LockRecordTest extends TestCase
 
     public function test_isTimeoutAction_returnsTrueForTimeoutAction(): void
     {
-        $this->lockRecord->setActionType(LockRecord::ACTION_TIMEOUT);
+        $this->lockRecord->setActionType(ActionType::TIMEOUT);
         
         $this->assertFalse($this->lockRecord->isLockAction());
         $this->assertFalse($this->lockRecord->isUnlockAction());
@@ -275,7 +355,7 @@ class LockRecordTest extends TestCase
 
     public function test_isBypassAttempt_returnsTrueForBypassAction(): void
     {
-        $this->lockRecord->setActionType(LockRecord::ACTION_BYPASS_ATTEMPT);
+        $this->lockRecord->setActionType(ActionType::BYPASS_ATTEMPT);
         
         $this->assertFalse($this->lockRecord->isLockAction());
         $this->assertFalse($this->lockRecord->isUnlockAction());
@@ -283,23 +363,13 @@ class LockRecordTest extends TestCase
         $this->assertTrue($this->lockRecord->isBypassAttempt());
     }
 
-    public function test_statusMethods_returnFalseForCustomAction(): void
-    {
-        $this->lockRecord->setActionType('custom_action');
-        
-        $this->assertFalse($this->lockRecord->isLockAction());
-        $this->assertFalse($this->lockRecord->isUnlockAction());
-        $this->assertFalse($this->lockRecord->isTimeoutAction());
-        $this->assertFalse($this->lockRecord->isBypassAttempt());
-    }
-
     public function test_getCreatedAt_remainsConstant(): void
     {
         $originalCreatedAt = $this->lockRecord->getCreatedAt();
         
         // 修改记录
-        $this->lockRecord->setUserId(123);
-        $this->lockRecord->setActionType(LockRecord::ACTION_LOCKED);
+        $this->lockRecord->setUser(new TestUser(123));
+        $this->lockRecord->setActionType(ActionType::LOCKED);
         $this->lockRecord->setRoute('/test');
         
         $this->assertEquals($originalCreatedAt, $this->lockRecord->getCreatedAt());
@@ -310,19 +380,21 @@ class LockRecordTest extends TestCase
      */
     public function test_methodChaining(): void
     {
+        $user = new TestUser(123);
         $result = $this->lockRecord
-            ->setUserId(123)
+            ->setUser($user)
             ->setSessionId('sess_abc123')
-            ->setActionType(LockRecord::ACTION_LOCKED)
+            ->setActionType(ActionType::LOCKED)
             ->setRoute('/billing/invoice')
             ->setIpAddress('192.168.1.100')
             ->setUserAgent('Mozilla/5.0')
             ->setContext(['reason' => 'timeout']);
             
         $this->assertSame($this->lockRecord, $result);
+        $this->assertSame($user, $this->lockRecord->getUser());
         $this->assertEquals(123, $this->lockRecord->getUserId());
         $this->assertEquals('sess_abc123', $this->lockRecord->getSessionId());
-        $this->assertEquals(LockRecord::ACTION_LOCKED, $this->lockRecord->getActionType());
+        $this->assertSame(ActionType::LOCKED, $this->lockRecord->getActionType());
         $this->assertEquals('/billing/invoice', $this->lockRecord->getRoute());
         $this->assertEquals('192.168.1.100', $this->lockRecord->getIpAddress());
         $this->assertEquals('Mozilla/5.0', $this->lockRecord->getUserAgent());
@@ -334,13 +406,6 @@ class LockRecordTest extends TestCase
      */
     public function test_extremeValues(): void
     {
-        // 极端用户ID
-        $this->lockRecord->setUserId(PHP_INT_MAX);
-        $this->assertEquals(PHP_INT_MAX, $this->lockRecord->getUserId());
-        
-        $this->lockRecord->setUserId(PHP_INT_MIN);
-        $this->assertEquals(PHP_INT_MIN, $this->lockRecord->getUserId());
-        
         // 极长字符串
         $longString = str_repeat('x', 10000);
         $this->lockRecord->setRoute($longString);
@@ -349,4 +414,4 @@ class LockRecordTest extends TestCase
         $this->lockRecord->setUserAgent($longString);
         $this->assertEquals($longString, $this->lockRecord->getUserAgent());
     }
-} 
+}

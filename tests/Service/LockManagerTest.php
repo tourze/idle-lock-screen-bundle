@@ -436,10 +436,15 @@ class LockManagerTest extends TestCase
         $limit = 25;
         $mockRecords = [$this->createMockLockRecord()];
 
-        $this->setupQueryBuilderForUserHistory($userId, $limit, $mockRecords);
+        $this->security
+            ->expects($this->once())
+            ->method('getUser')
+            ->willReturn($this->user);
+
+        $this->setupQueryBuilderForUserHistoryWithUserId($userId, $limit, $mockRecords);
 
         $result = $this->lockManager->getUserLockHistory($userId, $limit);
-        
+
         $this->assertEquals($mockRecords, $result);
     }
 
@@ -448,7 +453,6 @@ class LockManagerTest extends TestCase
      */
     public function test_getUserLockHistory_withCurrentUser(): void
     {
-        $userId = 123;
         $mockRecords = [$this->createMockLockRecord()];
 
         $this->security
@@ -456,7 +460,7 @@ class LockManagerTest extends TestCase
             ->method('getUser')
             ->willReturn($this->user);
         
-        $this->setupQueryBuilderForUserHistory($userId, 50, $mockRecords);
+        $this->setupQueryBuilderForCurrentUserHistory(50, $mockRecords);
 
         $result = $this->lockManager->getUserLockHistory();
         
@@ -621,13 +625,64 @@ class LockManagerTest extends TestCase
         $this->queryBuilder
             ->expects($this->once())
             ->method('where')
-            ->with('lr.userId = :userId')
+            ->with('lr.user = :user OR (lr.user IS NULL AND lr.userId = :userId)')
+            ->willReturnSelf();
+
+        $this->queryBuilder
+            ->expects($this->exactly(2))
+            ->method('setParameter')
+            ->willReturnCallback(function ($param, $value) use ($userId) {
+                if ($param === 'user') {
+                    $this->assertSame($this->user, $value);
+                } elseif ($param === 'userId') {
+                    $this->assertEquals($userId, $value);
+                }
+                return $this->queryBuilder;
+            });
+
+        $this->queryBuilder
+            ->expects($this->once())
+            ->method('orderBy')
+            ->with('lr.createdAt', 'DESC')
             ->willReturnSelf();
 
         $this->queryBuilder
             ->expects($this->once())
-            ->method('setParameter')
-            ->with('userId', $userId)
+            ->method('setMaxResults')
+            ->with($limit)
+            ->willReturnSelf();
+
+        $this->queryBuilder
+            ->expects($this->once())
+            ->method('getQuery')
+            ->willReturn($this->query);
+
+        $this->query
+            ->expects($this->once())
+            ->method('getResult')
+            ->willReturn($records);
+    }
+
+    /**
+     * 设置指定用户ID的历史查询 Mock
+     */
+    private function setupQueryBuilderForUserHistoryWithUserId(int $userId, int $limit, array $records): void
+    {
+        $this->entityManager
+            ->expects($this->once())
+            ->method('createQueryBuilder')
+            ->willReturn($this->queryBuilder);
+
+        $this->queryBuilder
+            ->expects($this->once())
+            ->method('select')
+            ->with('lr')
+            ->willReturnSelf();
+
+        $this->queryBuilder
+            ->expects($this->once())
+            ->method('from')
+            ->with(LockRecord::class, 'lr')
             ->willReturnSelf();
 
         $this->queryBuilder
@@ -640,6 +695,81 @@ class LockManagerTest extends TestCase
             ->expects($this->once())
             ->method('setMaxResults')
             ->with($limit)
+            ->willReturnSelf();
+
+        $this->queryBuilder
+            ->expects($this->once())
+            ->method('where')
+            ->with('lr.user = :user OR (lr.user IS NULL AND lr.userId = :userId)')
+            ->willReturnSelf();
+
+        $this->queryBuilder
+            ->expects($this->exactly(2))
+            ->method('setParameter')
+            ->willReturnCallback(function ($param, $value) use ($userId) {
+                if ($param === 'user') {
+                    $this->assertSame($this->user, $value);
+                } elseif ($param === 'userId') {
+                    $this->assertEquals($userId, $value);
+                }
+                return $this->queryBuilder;
+            });
+
+        $this->queryBuilder
+            ->expects($this->once())
+            ->method('getQuery')
+            ->willReturn($this->query);
+
+        $this->query
+            ->expects($this->once())
+            ->method('getResult')
+            ->willReturn($records);
+    }
+
+    /**
+     * 设置当前用户历史查询 Mock
+     */
+    private function setupQueryBuilderForCurrentUserHistory(int $limit, array $records): void
+    {
+        $this->entityManager
+            ->expects($this->once())
+            ->method('createQueryBuilder')
+            ->willReturn($this->queryBuilder);
+
+        $this->queryBuilder
+            ->expects($this->once())
+            ->method('select')
+            ->with('lr')
+            ->willReturnSelf();
+
+        $this->queryBuilder
+            ->expects($this->once())
+            ->method('from')
+            ->with(LockRecord::class, 'lr')
+            ->willReturnSelf();
+
+        $this->queryBuilder
+            ->expects($this->once())
+            ->method('orderBy')
+            ->with('lr.createdAt', 'DESC')
+            ->willReturnSelf();
+
+        $this->queryBuilder
+            ->expects($this->once())
+            ->method('setMaxResults')
+            ->with($limit)
+            ->willReturnSelf();
+
+        $this->queryBuilder
+            ->expects($this->once())
+            ->method('where')
+            ->with('lr.user = :user')
+            ->willReturnSelf();
+
+        $this->queryBuilder
+            ->expects($this->once())
+            ->method('setParameter')
+            ->with('user', $this->user)
             ->willReturnSelf();
 
         $this->queryBuilder
@@ -716,9 +846,9 @@ class LockManagerTest extends TestCase
     private function createMockLockRecord(): LockRecord
     {
         $record = new LockRecord();
-        $record->setUserId(123)
+        $record->setUser($this->user)
                ->setSessionId('test_session')
-               ->setActionType(LockRecord::ACTION_LOCKED)
+               ->setActionType(\Tourze\IdleLockScreenBundle\Enum\ActionType::LOCKED)
                ->setRoute('/test/route');
         
         return $record;

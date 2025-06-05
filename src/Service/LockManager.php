@@ -7,6 +7,7 @@ use Symfony\Bundle\SecurityBundle\Security;
 use Symfony\Component\HttpFoundation\RequestStack;
 use Symfony\Component\HttpFoundation\Session\SessionInterface;
 use Tourze\IdleLockScreenBundle\Entity\LockRecord;
+use Tourze\IdleLockScreenBundle\Enum\ActionType;
 
 /**
  * 锁定管理服务
@@ -39,7 +40,7 @@ class LockManager
         $session->set(self::SESSION_LOCK_ROUTE_KEY, $route);
         $session->set(self::SESSION_LOCK_TIME_KEY, time());
 
-        $this->recordLockAction(LockRecord::ACTION_LOCKED, $route, [
+        $this->recordLockAction(ActionType::LOCKED, $route, [
             'reason' => $reason,
             'lock_time' => time()
         ]);
@@ -56,12 +57,12 @@ class LockManager
         }
 
         $lockedRoute = $session->get(self::SESSION_LOCK_ROUTE_KEY);
-        
+
         $session->remove(self::SESSION_LOCK_KEY);
         $session->remove(self::SESSION_LOCK_ROUTE_KEY);
         $session->remove(self::SESSION_LOCK_TIME_KEY);
 
-        $this->recordLockAction(LockRecord::ACTION_UNLOCKED, $route ?? $lockedRoute ?? 'unknown');
+        $this->recordLockAction(ActionType::UNLOCKED, $route ?? $lockedRoute ?? 'unknown');
     }
 
     /**
@@ -108,7 +109,7 @@ class LockManager
      */
     public function recordTimeout(string $route): void
     {
-        $this->recordLockAction(LockRecord::ACTION_TIMEOUT, $route, [
+        $this->recordLockAction(ActionType::TIMEOUT, $route, [
             'timeout_time' => time()
         ]);
     }
@@ -118,7 +119,7 @@ class LockManager
      */
     public function recordBypassAttempt(string $route, ?string $method = null): void
     {
-        $this->recordLockAction(LockRecord::ACTION_BYPASS_ATTEMPT, $route, [
+        $this->recordLockAction(ActionType::BYPASS_ATTEMPT, $route, [
             'attempt_time' => time(),
             'method' => $method
         ]);
@@ -148,18 +149,29 @@ class LockManager
      */
     public function getUserLockHistory(?int $userId = null, int $limit = 50): array
     {
-        $user = $userId ?? $this->getCurrentUserId();
-        if (!$user) {
+        $currentUser = $this->security->getUser();
+
+        // 如果没有指定用户ID且当前也没有登录用户，返回空数组
+        if ($userId === null && $currentUser === null) {
             return [];
         }
 
         $qb = $this->entityManager->createQueryBuilder();
         $qb->select('lr')
-           ->from(LockRecord::class, 'lr')
-           ->where('lr.userId = :userId')
-           ->setParameter('userId', $user)
-           ->orderBy('lr.createdAt', 'DESC')
-           ->setMaxResults($limit);
+            ->from(LockRecord::class, 'lr')
+            ->orderBy('lr.createdAt', 'DESC')
+            ->setMaxResults($limit);
+
+        if ($userId !== null && $currentUser !== null) {
+            // 指定了用户ID，查询该用户的记录（包括关联和兼容旧数据）
+            $qb->where('lr.user = :user OR (lr.user IS NULL AND lr.userId = :userId)')
+                ->setParameter('user', $currentUser)
+                ->setParameter('userId', $userId);
+        } elseif ($currentUser !== null) {
+            // 没有指定用户ID，查询当前登录用户的记录
+            $qb->where('lr.user = :user')
+                ->setParameter('user', $currentUser);
+        }
 
         return $qb->getQuery()->getResult();
     }
@@ -176,11 +188,11 @@ class LockManager
 
         $qb = $this->entityManager->createQueryBuilder();
         $qb->select('lr')
-           ->from(LockRecord::class, 'lr')
-           ->where('lr.sessionId = :sessionId')
-           ->setParameter('sessionId', $session)
-           ->orderBy('lr.createdAt', 'DESC')
-           ->setMaxResults($limit);
+            ->from(LockRecord::class, 'lr')
+            ->where('lr.sessionId = :sessionId')
+            ->setParameter('sessionId', $session)
+            ->orderBy('lr.createdAt', 'DESC')
+            ->setMaxResults($limit);
 
         return $qb->getQuery()->getResult();
     }
@@ -188,7 +200,7 @@ class LockManager
     /**
      * 记录锁定操作
      */
-    private function recordLockAction(string $actionType, string $route, ?array $context = null): void
+    private function recordLockAction(ActionType $actionType, string $route, ?array $context = null): void
     {
         $request = $this->requestStack->getCurrentRequest();
         if (!$request) {
@@ -196,13 +208,13 @@ class LockManager
         }
 
         $record = new LockRecord();
-        $record->setUserId($this->getCurrentUserId())
-               ->setSessionId($this->getCurrentSessionId() ?? 'unknown')
-               ->setActionType($actionType)
-               ->setRoute($route)
-               ->setIpAddress($request->getClientIp())
-               ->setUserAgent($request->headers->get('User-Agent'))
-               ->setContext($context);
+        $record->setUser($this->security->getUser())
+            ->setSessionId($this->getCurrentSessionId() ?? 'unknown')
+            ->setActionType($actionType)
+            ->setRoute($route)
+            ->setIpAddress($request->getClientIp())
+            ->setUserAgent($request->headers->get('User-Agent'))
+            ->setContext($context);
 
         $this->entityManager->persist($record);
         $this->entityManager->flush();
@@ -215,27 +227,6 @@ class LockManager
     {
         $request = $this->requestStack->getCurrentRequest();
         return $request?->getSession();
-    }
-
-    /**
-     * 获取当前用户ID
-     */
-    private function getCurrentUserId(): ?int
-    {
-        $user = $this->security->getUser();
-        if ($user && is_object($user)) {
-            // 尝试多种方式获取用户ID
-            if (method_exists($user, 'getId')) {
-                $id = call_user_func([$user, 'getId']);
-                return is_int($id) ? $id : null;
-            }
-            if (method_exists($user, 'getUserIdentifier')) {
-                $identifier = $user->getUserIdentifier();
-                return is_numeric($identifier) ? (int) $identifier : null;
-            }
-        }
-
-        return null;
     }
 
     /**
