@@ -11,8 +11,9 @@ class RoutePatternMatcher
     /**
      * 检查路由是否匹配指定的模式
      *
-     * @param string $route 要检查的路由
+     * @param string $route   要检查的路由
      * @param string $pattern 匹配模式
+     *
      * @return bool 是否匹配
      */
     public function matches(string $route, string $pattern): bool
@@ -39,8 +40,9 @@ class RoutePatternMatcher
     /**
      * 检查多个模式中是否有匹配的
      *
-     * @param string $route 要检查的路由
-     * @param array $patterns 模式数组
+     * @param string $route    要检查的路由
+     * @param string[] $patterns 模式数组
+     *
      * @return bool 是否有匹配的模式
      */
     public function matchesAny(string $route, array $patterns): bool
@@ -65,7 +67,7 @@ class RoutePatternMatcher
         }
 
         // 检查是否包含正则表达式分组、字符类等
-        if (preg_match('/[\\(\\)\\[\\]\\{\\}\\|\\+\\?]/', $pattern)) {
+        if (1 === preg_match('/[\(\)\[\]\{\}\|\+\?]/', $pattern)) {
             return true;
         }
 
@@ -80,14 +82,14 @@ class RoutePatternMatcher
         try {
             // 如果模式不是完整的正则表达式，添加分隔符
             // 检查是否已经是完整的正则表达式（以分隔符开头和结尾）
-            if (!preg_match('/^[#\/].+[#\/][gimxs]*$/', $pattern)) {
+            if (1 !== preg_match('/^[#\/].+[#\/][gimxs]*$/', $pattern)) {
                 $pattern = '#' . $pattern . '#';
             }
 
             $result = @preg_match($pattern, $route);
-            
+
             // 检查是否有错误
-            if ($result === false || preg_last_error() !== PREG_NO_ERROR) {
+            if (false === $result || PREG_NO_ERROR !== preg_last_error()) {
                 // 如果正则表达式无效，回退到通配符匹配
                 return $this->matchesWildcard($route, $pattern);
             }
@@ -110,57 +112,131 @@ class RoutePatternMatcher
         // 将路由和模式都分割成段来处理
         $routeParts = explode('/', trim($route, '/'));
         $patternParts = explode('/', trim($pattern, '/'));
-        
+
         return $this->matchParts($routeParts, $patternParts);
     }
-    
+
     /**
      * 递归匹配路径段
+     * @param string[] $routeParts
+     * @param string[] $patternParts
      */
     private function matchParts(array $routeParts, array $patternParts): bool
     {
         $routeIndex = 0;
         $patternIndex = 0;
-        
-        while ($routeIndex < count($routeParts) && $patternIndex < count($patternParts)) {
+
+        while ($this->hasRemainingParts($routeParts, $patternParts, $routeIndex, $patternIndex)) {
             $routePart = $routeParts[$routeIndex];
             $patternPart = $patternParts[$patternIndex];
-            
-            if ($patternPart === '**') {
-                // ** 匹配任意数量的段
-                if ($patternIndex === count($patternParts) - 1) {
-                    // ** 是最后一个模式，匹配剩余所有段
-                    return true;
-                }
-                
-                // 尝试匹配后续模式
-                for ($i = $routeIndex; $i <= count($routeParts); $i++) {
-                    if ($this->matchParts(
-                        array_slice($routeParts, $i),
-                        array_slice($patternParts, $patternIndex + 1)
-                    )) {
-                        return true;
-                    }
-                }
-                return false;
-            } elseif ($patternPart === '*') {
-                // * 匹配单个段
-                $routeIndex++;
-                $patternIndex++;
+
+            if ($this->isDoubleWildcard($patternPart)) {
+                return $this->handleDoubleWildcard($routeParts, $patternParts, $routeIndex, $patternIndex);
+            }
+
+            if ($this->isSingleWildcard($patternPart)) {
+                ++$routeIndex;
+                ++$patternIndex;
             } else {
-                // 精确匹配或正则匹配
                 if (!$this->matchSinglePart($routePart, $patternPart)) {
                     return false;
                 }
-                $routeIndex++;
-                $patternIndex++;
+                ++$routeIndex;
+                ++$patternIndex;
             }
         }
-        
-        // 检查是否都匹配完了
+
+        return $this->isCompleteMatch($routeParts, $patternParts, $routeIndex, $patternIndex);
+    }
+
+    /**
+     * 检查是否还有剩余部分需要匹配
+     */
+    /**
+     * @param string[] $routeParts
+     * @param string[] $patternParts
+     */
+    private function hasRemainingParts(array $routeParts, array $patternParts, int $routeIndex, int $patternIndex): bool
+    {
+        return $routeIndex < count($routeParts) && $patternIndex < count($patternParts);
+    }
+
+    /**
+     * 是否是双星通配符
+     */
+    private function isDoubleWildcard(string $patternPart): bool
+    {
+        return '**' === $patternPart;
+    }
+
+    /**
+     * 是否是单星通配符
+     */
+    private function isSingleWildcard(string $patternPart): bool
+    {
+        return '*' === $patternPart;
+    }
+
+    /**
+     * 处理双星通配符
+     */
+    /**
+     * @param string[] $routeParts
+     * @param string[] $patternParts
+     */
+    private function handleDoubleWildcard(array $routeParts, array $patternParts, int $routeIndex, int $patternIndex): bool
+    {
+        if ($this->isLastPattern($patternParts, $patternIndex)) {
+            return true;
+        }
+
+        return $this->tryMatchRemaining($routeParts, $patternParts, $routeIndex, $patternIndex);
+    }
+
+    /**
+     * 是否是最后一个模式
+     */
+    /**
+     * @param string[] $patternParts
+     */
+    private function isLastPattern(array $patternParts, int $patternIndex): bool
+    {
+        return $patternIndex === count($patternParts) - 1;
+    }
+
+    /**
+     * 尝试匹配剩余模式
+     */
+    /**
+     * @param string[] $routeParts
+     * @param string[] $patternParts
+     */
+    private function tryMatchRemaining(array $routeParts, array $patternParts, int $routeIndex, int $patternIndex): bool
+    {
+        for ($i = $routeIndex; $i <= count($routeParts); ++$i) {
+            if ($this->matchParts(
+                array_slice($routeParts, $i),
+                array_slice($patternParts, $patternIndex + 1)
+            )) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 检查是否完全匹配
+     */
+    /**
+     * @param string[] $routeParts
+     * @param string[] $patternParts
+     */
+    private function isCompleteMatch(array $routeParts, array $patternParts, int $routeIndex, int $patternIndex): bool
+    {
         return $routeIndex === count($routeParts) && $patternIndex === count($patternParts);
     }
-    
+
     /**
      * 匹配单个路径段
      */
@@ -169,17 +245,18 @@ class RoutePatternMatcher
         if ($routePart === $patternPart) {
             return true;
         }
-        
+
         // 如果包含通配符，转换为正则表达式
         if (str_contains($patternPart, '*')) {
             // 转义特殊字符，但保留通配符
             $regex = preg_quote($patternPart, '#');
             // 将转义的通配符转换为正则表达式
-            $regex = str_replace('\\*', '.*', $regex);
+            $regex = str_replace('\*', '.*', $regex);
             $regex = '#^' . $regex . '$#';
-            return preg_match($regex, $routePart) === 1;
+
+            return 1 === preg_match($regex, $routePart);
         }
-        
+
         return false;
     }
 
@@ -188,81 +265,130 @@ class RoutePatternMatcher
      */
     public function isValidPattern(string $pattern): bool
     {
-        if (empty($pattern)) {
+        if ('' === $pattern) {
             return false;
         }
 
-        // 如果是正则表达式，验证其有效性
         if ($this->isRegexPattern($pattern)) {
-            try {
-                $testPattern = $pattern;
-                // 检查是否已经是完整的正则表达式（以分隔符开头和结尾）
-                if (!preg_match('/^[#\/].+[#\/][gimxs]*$/', $testPattern)) {
-                    $testPattern = '#' . $testPattern . '#';
-                }
-                
-                // 清除之前的错误
-                preg_last_error();
-                
-                // 测试正则表达式
-                $result = @preg_match($testPattern, '');
-                $error = preg_last_error();
-                
-                // 如果有错误或者结果为 false，则无效
-                if ($result === false || $error !== PREG_NO_ERROR) {
-                    return false;
-                }
-                
-                // 额外检查：检测常见的无效正则表达式模式
-                // 检查未闭合的括号、方括号等
-                $cleanPattern = trim($pattern, '^$');
-                
-                // 检查未闭合的方括号
-                if (preg_match('/\[[^\]]*$/', $cleanPattern)) {
-                    return false;
-                }
-                
-                // 检查未闭合的圆括号
-                $openParens = substr_count($cleanPattern, '(');
-                $closeParens = substr_count($cleanPattern, ')');
-                if ($openParens !== $closeParens) {
-                    return false;
-                }
-                
-                // 检查未闭合的花括号（量词）
-                if (preg_match('/\{[^}]*$/', $cleanPattern)) {
-                    return false;
-                }
-                
-                // 检查孤立的花括号（不在量词位置）
-                if (preg_match('/(?<![\w\]\)])[\{]/', $cleanPattern)) {
-                    return false;
-                }
-                
-                // 额外测试：尝试匹配不同的字符串
-                @preg_match($testPattern, 'test');
-                if (preg_last_error() !== PREG_NO_ERROR) {
-                    return false;
-                }
-                
-                @preg_match($testPattern, '/test/path');
-                if (preg_last_error() !== PREG_NO_ERROR) {
-                    return false;
-                }
-                
-                return true;
-            } catch (\Exception) {
+            return $this->validateRegexPattern($pattern);
+        }
+
+        if (str_contains($pattern, '*')) {
+            return $this->validateWildcardPattern($pattern);
+        }
+
+        // 精确匹配模式总是有效的
+        return true;
+    }
+
+    /**
+     * 验证正则表达式模式
+     */
+    private function validateRegexPattern(string $pattern): bool
+    {
+        try {
+            $testPattern = $this->normalizeRegexPattern($pattern);
+
+            if (!$this->testRegexCompilation($testPattern)) {
+                return false;
+            }
+
+            return $this->validateRegexSyntax($pattern) && $this->testRegexMatching($testPattern);
+        } catch (\Exception) {
+            return false;
+        }
+    }
+
+    /**
+     * 验证通配符模式
+     */
+    private function validateWildcardPattern(string $pattern): bool
+    {
+        // 通配符模式通常是有效的，除非有明显的语法错误
+        return true;
+    }
+
+    /**
+     * 标准化正则表达式模式
+     */
+    private function normalizeRegexPattern(string $pattern): string
+    {
+        if (1 !== preg_match('/^[#\/].+[#\/][gimxs]*$/', $pattern)) {
+            return '#' . $pattern . '#';
+        }
+
+        return $pattern;
+    }
+
+    /**
+     * 测试正则表达式编译
+     */
+    private function testRegexCompilation(string $testPattern): bool
+    {
+        preg_last_error();
+        $result = @preg_match($testPattern, '');
+        $error = preg_last_error();
+
+        return false !== $result && PREG_NO_ERROR === $error;
+    }
+
+    /**
+     * 验证正则表达式语法
+     */
+    private function validateRegexSyntax(string $pattern): bool
+    {
+        $cleanPattern = trim($pattern, '^$');
+
+        return $this->validateBrackets($cleanPattern)
+            && $this->validateParentheses($cleanPattern)
+            && $this->validateBraces($cleanPattern);
+    }
+
+    /**
+     * 验证方括号
+     */
+    private function validateBrackets(string $pattern): bool
+    {
+        return 1 !== preg_match('/\[[^\]]*$/', $pattern);
+    }
+
+    /**
+     * 验证圆括号
+     */
+    private function validateParentheses(string $pattern): bool
+    {
+        $openParens = substr_count($pattern, '(');
+        $closeParens = substr_count($pattern, ')');
+
+        return $openParens === $closeParens;
+    }
+
+    /**
+     * 验证花括号
+     */
+    private function validateBraces(string $pattern): bool
+    {
+        if (1 === preg_match('/\{[^}]*$/', $pattern)) {
+            return false;
+        }
+
+        return 1 !== preg_match('/(?<![\w\]\)])[\{]/', $pattern);
+    }
+
+    /**
+     * 测试正则表达式匹配
+     */
+    private function testRegexMatching(string $testPattern): bool
+    {
+        $testStrings = ['test', '/test/path'];
+
+        foreach ($testStrings as $testString) {
+            @preg_match($testPattern, $testString);
+            if (PREG_NO_ERROR !== preg_last_error()) {
                 return false;
             }
         }
 
-        // 对于通配符模式，检查是否有基本的语法错误
-        if (str_contains($pattern, '*')) {
-            // 通配符模式通常是有效的，除非有明显的语法错误
-            return true;
-        }
-
-        // 精确匹配模式总是有效的
         return true;
     }
 

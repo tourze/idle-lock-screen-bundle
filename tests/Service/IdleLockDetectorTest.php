@@ -2,176 +2,175 @@
 
 namespace Tourze\IdleLockScreenBundle\Tests\Service;
 
-use Doctrine\ORM\EntityManagerInterface;
-use Doctrine\ORM\EntityRepository;
-use Doctrine\ORM\Query;
-use Doctrine\ORM\QueryBuilder;
-use PHPUnit\Framework\MockObject\MockObject;
-use PHPUnit\Framework\TestCase;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use Tourze\IdleLockScreenBundle\Entity\LockConfiguration;
 use Tourze\IdleLockScreenBundle\Service\IdleLockDetector;
-use Tourze\IdleLockScreenBundle\Service\RoutePatternMatcher;
+use Tourze\PHPUnitSymfonyKernelTest\AbstractIntegrationTestCase;
 
 /**
- * IdleLockDetector 测试用例
+ * IdleLockDetector 集成测试用例
+ *
+ * @internal
  */
-class IdleLockDetectorTest extends TestCase
+#[CoversClass(IdleLockDetector::class)]
+#[RunTestsInSeparateProcesses]
+final class IdleLockDetectorTest extends AbstractIntegrationTestCase
 {
-    private IdleLockDetector $detector;
-    private EntityManagerInterface&MockObject $entityManager;
-    private RoutePatternMatcher&MockObject $routePatternMatcher;
-    private QueryBuilder&MockObject $queryBuilder;
-    private Query&MockObject $query;
-    private EntityRepository&MockObject $repository;
+    private ?IdleLockDetector $detector = null;
 
-    protected function setUp(): void
+    protected function onSetUp(): void
     {
-        $this->entityManager = $this->createMock(EntityManagerInterface::class);
-        $this->routePatternMatcher = $this->createMock(RoutePatternMatcher::class);
-        $this->queryBuilder = $this->createMock(QueryBuilder::class);
-        $this->query = $this->createMock(Query::class);
-        $this->repository = $this->createMock(EntityRepository::class);
+        // 集成测试设置
+    }
 
-        $this->detector = new IdleLockDetector(
-            $this->entityManager,
-            $this->routePatternMatcher
+    public function getDetector(): IdleLockDetector
+    {
+        if (null === $this->detector) {
+            $detector = self::getContainer()->get(IdleLockDetector::class);
+            $this->assertInstanceOf(IdleLockDetector::class, $detector);
+            $this->detector = $detector;
+        }
+
+        return $this->detector;
+    }
+
+    /**
+     * 测试创建配置
+     */
+    public function testCreateConfiguration(): void
+    {
+        $result = $this->getDetector()->createConfiguration(
+            '/api/*',
+            90,
+            true,
+            'API routes lock'
         );
+
+        $this->assertInstanceOf(LockConfiguration::class, $result);
+        $this->assertEquals('/api/*', $result->getRoutePattern());
+        $this->assertEquals(90, $result->getTimeoutSeconds());
+        $this->assertTrue($result->isEnabled());
+        $this->assertEquals('API routes lock', $result->getDescription());
+
+        // 验证数据库持久化
+        self::getEntityManager()->refresh($result);
+        $this->assertEquals('/api/*', $result->getRoutePattern());
+    }
+
+    /**
+     * 测试创建配置 - 使用默认值
+     */
+    public function testCreateConfigurationWithDefaults(): void
+    {
+        $result = $this->getDetector()->createConfiguration('/test/*');
+
+        $this->assertEquals('/test/*', $result->getRoutePattern());
+        $this->assertEquals(60, $result->getTimeoutSeconds());
+        $this->assertTrue($result->isEnabled());
+        $this->assertNull($result->getDescription());
     }
 
     /**
      * 测试路由是否需要锁定 - 有匹配配置
      */
-    public function test_shouldLockRoute_withMatchingConfiguration(): void
+    public function testShouldLockRouteWithMatchingConfiguration(): void
     {
-        $config = $this->createLockConfiguration('/billing/*', 60, true);
-        
-        $this->setupQueryBuilderMock([$config]);
-        $this->routePatternMatcher
-            ->expects($this->once())
-            ->method('matches')
-            ->with('/billing/invoice', '/billing/*')
-            ->willReturn(true);
+        // 创建配置
+        $this->getDetector()->createConfiguration('/billing/*', 60, true);
 
-        $result = $this->detector->shouldLockRoute('/billing/invoice');
-        
+        $result = $this->getDetector()->shouldLockRoute('/billing/invoice');
+
         $this->assertTrue($result);
     }
 
     /**
      * 测试路由是否需要锁定 - 无匹配配置
      */
-    public function test_shouldLockRoute_withoutMatchingConfiguration(): void
+    public function testShouldLockRouteWithoutMatchingConfiguration(): void
     {
-        $config = $this->createLockConfiguration('/admin/*', 60, true);
-        
-        $this->setupQueryBuilderMock([$config]);
-        $this->routePatternMatcher
-            ->expects($this->once())
-            ->method('matches')
-            ->with('/billing/invoice', '/admin/*')
-            ->willReturn(false);
+        // 创建不匹配的配置
+        $this->getDetector()->createConfiguration('/admin/*', 60, true);
 
-        $result = $this->detector->shouldLockRoute('/billing/invoice');
-        
+        $result = $this->getDetector()->shouldLockRoute('/billing/invoice');
+
         $this->assertFalse($result);
     }
 
     /**
      * 测试路由是否需要锁定 - 空配置
      */
-    public function test_shouldLockRoute_withEmptyConfigurations(): void
+    public function testShouldLockRouteWithEmptyConfigurations(): void
     {
-        $this->setupQueryBuilderMock([]);
+        $result = $this->getDetector()->shouldLockRoute('/any/route');
 
-        $result = $this->detector->shouldLockRoute('/any/route');
-        
         $this->assertFalse($result);
     }
 
     /**
      * 测试获取路由配置 - 有匹配
      */
-    public function test_getRouteConfiguration_withMatch(): void
+    public function testGetRouteConfigurationWithMatch(): void
     {
-        $config1 = $this->createLockConfiguration('/admin/*', 30, true);
-        $config2 = $this->createLockConfiguration('/billing/*', 60, true);
-        
-        $this->setupQueryBuilderMock([$config1, $config2]);
-        $this->routePatternMatcher
-            ->expects($this->exactly(2))
-            ->method('matches')
-            ->willReturnMap([
-                ['/billing/invoice', '/admin/*', false],
-                ['/billing/invoice', '/billing/*', true],
-            ]);
+        $config1 = $this->getDetector()->createConfiguration('/admin/*', 30, true);
+        $config2 = $this->getDetector()->createConfiguration('/billing/*', 60, true);
 
-        $result = $this->detector->getRouteConfiguration('/billing/invoice');
-        
+        $result = $this->getDetector()->getRouteConfiguration('/billing/invoice');
+
         $this->assertSame($config2, $result);
     }
 
     /**
      * 测试获取路由配置 - 无匹配
      */
-    public function test_getRouteConfiguration_withoutMatch(): void
+    public function testGetRouteConfigurationWithoutMatch(): void
     {
-        $config = $this->createLockConfiguration('/admin/*', 60, true);
-        
-        $this->setupQueryBuilderMock([$config]);
-        $this->routePatternMatcher
-            ->expects($this->once())
-            ->method('matches')
-            ->with('/public/home', '/admin/*')
-            ->willReturn(false);
+        $this->getDetector()->createConfiguration('/admin/*', 60, true);
 
-        $result = $this->detector->getRouteConfiguration('/public/home');
-        
+        $result = $this->getDetector()->getRouteConfiguration('/public/home');
+
         $this->assertNull($result);
     }
 
     /**
      * 测试获取路由超时时间 - 有配置
      */
-    public function test_getRouteTimeout_withConfiguration(): void
+    public function testGetRouteTimeoutWithConfiguration(): void
     {
-        $config = $this->createLockConfiguration('/billing/*', 120, true);
-        
-        $this->setupQueryBuilderMock([$config]);
-        $this->routePatternMatcher
-            ->expects($this->once())
-            ->method('matches')
-            ->with('/billing/invoice', '/billing/*')
-            ->willReturn(true);
+        $this->getDetector()->createConfiguration('/billing/*', 120, true);
 
-        $result = $this->detector->getRouteTimeout('/billing/invoice');
-        
+        $result = $this->getDetector()->getRouteTimeout('/billing/invoice');
+
         $this->assertEquals(120, $result);
     }
 
     /**
      * 测试获取路由超时时间 - 无配置（默认值）
      */
-    public function test_getRouteTimeout_withoutConfiguration(): void
+    public function testGetRouteTimeoutWithoutConfiguration(): void
     {
-        $this->setupQueryBuilderMock([]);
+        $result = $this->getDetector()->getRouteTimeout('/public/home');
 
-        $result = $this->detector->getRouteTimeout('/public/home');
-        
         $this->assertEquals(60, $result);
     }
 
     /**
      * 测试获取所有启用的配置
      */
-    public function test_getEnabledConfigurations(): void
+    public function testGetEnabledConfigurations(): void
     {
-        $config1 = $this->createLockConfiguration('/admin/*', 60, true);
-        $config2 = $this->createLockConfiguration('/billing/*', 120, true);
-        
-        $this->setupQueryBuilderMock([$config1, $config2]);
+        // 清理所有现有配置
+        self::getEntityManager()
+            ->createQuery('DELETE FROM ' . LockConfiguration::class)
+            ->execute()
+        ;
 
-        $result = $this->detector->getEnabledConfigurations();
-        
+        $config1 = $this->getDetector()->createConfiguration('/admin/*', 60, true);
+        $config2 = $this->getDetector()->createConfiguration('/billing/*', 120, true);
+        $this->getDetector()->createConfiguration('/disabled/*', 90, false);
+
+        $result = $this->getDetector()->getEnabledConfigurations();
+
         $this->assertCount(2, $result);
         $this->assertContains($config1, $result);
         $this->assertContains($config2, $result);
@@ -180,89 +179,39 @@ class IdleLockDetectorTest extends TestCase
     /**
      * 测试获取所有配置（包括禁用的）
      */
-    public function test_getAllConfigurations(): void
+    public function testGetAllConfigurations(): void
     {
-        $config1 = $this->createLockConfiguration('/admin/*', 60, true);
-        $config2 = $this->createLockConfiguration('/billing/*', 120, false);
-        
-        $this->setupQueryBuilderForAllConfigurations([$config1, $config2]);
+        // 清理所有现有配置
+        self::getEntityManager()
+            ->createQuery('DELETE FROM ' . LockConfiguration::class)
+            ->execute()
+        ;
 
-        $result = $this->detector->getAllConfigurations();
-        
+        $config1 = $this->getDetector()->createConfiguration('/admin/*', 60, true);
+        $config2 = $this->getDetector()->createConfiguration('/billing/*', 120, false);
+
+        $result = $this->getDetector()->getAllConfigurations();
+
         $this->assertCount(2, $result);
         $this->assertContains($config1, $result);
         $this->assertContains($config2, $result);
     }
 
     /**
-     * 测试创建新配置
-     */
-    public function test_createConfiguration(): void
-    {
-        $this->entityManager
-            ->expects($this->once())
-            ->method('persist')
-            ->with($this->isInstanceOf(LockConfiguration::class));
-        
-        $this->entityManager
-            ->expects($this->once())
-            ->method('flush');
-
-        $result = $this->detector->createConfiguration(
-            '/api/*',
-            90,
-            true,
-            'API routes lock'
-        );
-        
-        $this->assertInstanceOf(LockConfiguration::class, $result);
-        $this->assertEquals('/api/*', $result->getRoutePattern());
-        $this->assertEquals(90, $result->getTimeoutSeconds());
-        $this->assertTrue($result->isEnabled());
-        $this->assertEquals('API routes lock', $result->getDescription());
-    }
-
-    /**
-     * 测试创建配置 - 使用默认值
-     */
-    public function test_createConfiguration_withDefaults(): void
-    {
-        $this->entityManager
-            ->expects($this->once())
-            ->method('persist')
-            ->with($this->isInstanceOf(LockConfiguration::class));
-        
-        $this->entityManager
-            ->expects($this->once())
-            ->method('flush');
-
-        $result = $this->detector->createConfiguration('/test/*');
-        
-        $this->assertEquals('/test/*', $result->getRoutePattern());
-        $this->assertEquals(60, $result->getTimeoutSeconds());
-        $this->assertTrue($result->isEnabled());
-        $this->assertNull($result->getDescription());
-    }
-
-    /**
      * 测试更新配置 - 全部参数
      */
-    public function test_updateConfiguration_allParameters(): void
+    public function testUpdateConfigurationAllParameters(): void
     {
-        $config = $this->createLockConfiguration('/old/*', 60, true, 'Old description');
-        
-        $this->entityManager
-            ->expects($this->once())
-            ->method('flush');
+        $config = $this->getDetector()->createConfiguration('/old/*', 60, true, 'Old description');
 
-        $result = $this->detector->updateConfiguration(
+        $result = $this->getDetector()->updateConfiguration(
             $config,
             '/new/*',
             120,
             false,
             'New description'
         );
-        
+
         $this->assertSame($config, $result);
         $this->assertEquals('/new/*', $config->getRoutePattern());
         $this->assertEquals(120, $config->getTimeoutSeconds());
@@ -273,25 +222,21 @@ class IdleLockDetectorTest extends TestCase
     /**
      * 测试更新配置 - 部分参数
      */
-    public function test_updateConfiguration_partialParameters(): void
+    public function testUpdateConfigurationPartialParameters(): void
     {
-        $config = $this->createLockConfiguration('/test/*', 60, true, 'Test');
+        $config = $this->getDetector()->createConfiguration('/test/*', 60, true, 'Test');
         $originalPattern = $config->getRoutePattern();
         $originalEnabled = $config->isEnabled();
         $originalDescription = $config->getDescription();
-        
-        $this->entityManager
-            ->expects($this->once())
-            ->method('flush');
 
-        $result = $this->detector->updateConfiguration(
+        $result = $this->getDetector()->updateConfiguration(
             $config,
             null,
             120,
             null,
             null
         );
-        
+
         $this->assertSame($config, $result);
         $this->assertEquals($originalPattern, $config->getRoutePattern());
         $this->assertEquals(120, $config->getTimeoutSeconds());
@@ -302,106 +247,66 @@ class IdleLockDetectorTest extends TestCase
     /**
      * 测试删除配置
      */
-    public function test_deleteConfiguration(): void
+    public function testDeleteConfiguration(): void
     {
-        $config = $this->createLockConfiguration('/test/*', 60, true);
-        
-        $this->entityManager
-            ->expects($this->once())
-            ->method('remove')
-            ->with($config);
-        
-        $this->entityManager
-            ->expects($this->once())
-            ->method('flush');
+        $config = $this->getDetector()->createConfiguration('/test/*', 60, true);
+        $configId = $config->getId();
+        $this->assertNotNull($configId);
 
-        $this->detector->deleteConfiguration($config);
+        $this->getDetector()->deleteConfiguration($config);
+
+        // 验证配置已删除
+        $result = $this->getDetector()->getConfigurationById($configId);
+        $this->assertNull($result);
     }
 
     /**
      * 测试根据ID获取配置
      */
-    public function test_getConfigurationById(): void
+    public function testGetConfigurationById(): void
     {
-        $config = $this->createLockConfiguration('/test/*', 60, true);
-        
-        $this->entityManager
-            ->expects($this->once())
-            ->method('getRepository')
-            ->with(LockConfiguration::class)
-            ->willReturn($this->repository);
-        
-        $this->repository
-            ->expects($this->once())
-            ->method('find')
-            ->with(123)
-            ->willReturn($config);
+        $config = $this->getDetector()->createConfiguration('/test/*', 60, true);
+        $configId = $config->getId();
+        $this->assertNotNull($configId);
 
-        $result = $this->detector->getConfigurationById(123);
-        
+        $result = $this->getDetector()->getConfigurationById($configId);
+
         $this->assertSame($config, $result);
     }
 
     /**
      * 测试根据ID获取配置 - 不存在
      */
-    public function test_getConfigurationById_notFound(): void
+    public function testGetConfigurationByIdNotFound(): void
     {
-        $this->entityManager
-            ->expects($this->once())
-            ->method('getRepository')
-            ->with(LockConfiguration::class)
-            ->willReturn($this->repository);
-        
-        $this->repository
-            ->expects($this->once())
-            ->method('find')
-            ->with(999)
-            ->willReturn(null);
+        $result = $this->getDetector()->getConfigurationById(999999);
 
-        $result = $this->detector->getConfigurationById(999);
-        
         $this->assertNull($result);
     }
 
     /**
      * 测试验证路由模式
      */
-    public function test_validateRoutePattern(): void
+    public function testValidateRoutePattern(): void
     {
-        $this->routePatternMatcher
-            ->expects($this->exactly(2))
-            ->method('isValidPattern')
-            ->willReturnMap([
-                ['/valid/*', true],
-                ['/invalid[', false],
-            ]);
-
-        $this->assertTrue($this->detector->validateRoutePattern('/valid/*'));
-        $this->assertFalse($this->detector->validateRoutePattern('/invalid['));
+        $this->assertTrue($this->getDetector()->validateRoutePattern('/valid/*'));
+        $this->assertTrue($this->getDetector()->validateRoutePattern('/admin/**'));
+        $this->assertTrue($this->getDetector()->validateRoutePattern('^/api/.*'));
+        $this->assertFalse($this->getDetector()->validateRoutePattern(''));
+        $this->assertFalse($this->getDetector()->validateRoutePattern('/invalid[unclosed'));
     }
 
     /**
      * 测试获取匹配的配置
      */
-    public function test_getMatchingConfigurations(): void
+    public function testGetMatchingConfigurations(): void
     {
-        $config1 = $this->createLockConfiguration('/admin/*', 60, true);
-        $config2 = $this->createLockConfiguration('/billing/*', 120, true);
-        $config3 = $this->createLockConfiguration('/api/*', 90, true);
-        
-        $this->setupQueryBuilderMock([$config1, $config2, $config3]);
-        $this->routePatternMatcher
-            ->expects($this->exactly(3))
-            ->method('matches')
-            ->willReturnMap([
-                ['/billing/invoice', '/admin/*', false],
-                ['/billing/invoice', '/billing/*', true],
-                ['/billing/invoice', '/api/*', false],
-            ]);
+        $config1 = $this->getDetector()->createConfiguration('/admin/*', 60, true);
+        $config2 = $this->getDetector()->createConfiguration('/billing/*', 120, true);
+        $config3 = $this->getDetector()->createConfiguration('/api/*', 90, true);
 
-        $result = $this->detector->getMatchingConfigurations('/billing/invoice');
-        
+        $result = $this->getDetector()->getMatchingConfigurations('/billing/invoice');
+
         $this->assertCount(1, $result);
         $this->assertContains($config2, $result);
     }
@@ -409,22 +314,13 @@ class IdleLockDetectorTest extends TestCase
     /**
      * 测试获取匹配的配置 - 多个匹配
      */
-    public function test_getMatchingConfigurations_multipleMatches(): void
+    public function testGetMatchingConfigurationsMultipleMatches(): void
     {
-        $config1 = $this->createLockConfiguration('/billing/*', 60, true);
-        $config2 = $this->createLockConfiguration('/billing/**', 120, true);
-        
-        $this->setupQueryBuilderMock([$config1, $config2]);
-        $this->routePatternMatcher
-            ->expects($this->exactly(2))
-            ->method('matches')
-            ->willReturnMap([
-                ['/billing/invoice', '/billing/*', true],
-                ['/billing/invoice', '/billing/**', true],
-            ]);
+        $config1 = $this->getDetector()->createConfiguration('/billing/*', 60, true);
+        $config2 = $this->getDetector()->createConfiguration('/billing/**', 120, true);
 
-        $result = $this->detector->getMatchingConfigurations('/billing/invoice');
-        
+        $result = $this->getDetector()->getMatchingConfigurations('/billing/invoice');
+
         $this->assertCount(2, $result);
         $this->assertContains($config1, $result);
         $this->assertContains($config2, $result);
@@ -433,180 +329,62 @@ class IdleLockDetectorTest extends TestCase
     /**
      * 测试批量切换配置状态
      */
-    public function test_toggleConfigurations(): void
+    public function testToggleConfigurations(): void
     {
-        $configIds = [1, 2, 3];
-        
-        $this->setupQueryBuilderForUpdate();
-        $this->query
-            ->expects($this->once())
-            ->method('execute')
-            ->willReturn(3);
+        $config1 = $this->getDetector()->createConfiguration('/test1/*', 60, true);
+        $config2 = $this->getDetector()->createConfiguration('/test2/*', 60, true);
+        $config3 = $this->getDetector()->createConfiguration('/test3/*', 60, true);
 
-        $result = $this->detector->toggleConfigurations($configIds, false);
-        
-        $this->assertEquals(3, $result);
+        $config1Id = $config1->getId();
+        $config2Id = $config2->getId();
+        $this->assertNotNull($config1Id);
+        $this->assertNotNull($config2Id);
+        $configIds = [$config1Id, $config2Id];
+
+        $result = $this->getDetector()->toggleConfigurations($configIds, false);
+
+        $this->assertEquals(2, $result);
+
+        // 验证配置状态已更新
+        self::getEntityManager()->refresh($config1);
+        self::getEntityManager()->refresh($config2);
+        self::getEntityManager()->refresh($config3);
+
+        $this->assertFalse($config1->isEnabled());
+        $this->assertFalse($config2->isEnabled());
+        $this->assertTrue($config3->isEnabled()); // 未被更新
     }
 
     /**
      * 测试批量切换配置状态 - 空数组
      */
-    public function test_toggleConfigurations_emptyArray(): void
+    public function testToggleConfigurationsEmptyArray(): void
     {
-        $this->setupQueryBuilderForUpdate();
-        $this->query
-            ->expects($this->once())
-            ->method('execute')
-            ->willReturn(0);
+        $result = $this->getDetector()->toggleConfigurations([], true);
 
-        $result = $this->detector->toggleConfigurations([], true);
-        
         $this->assertEquals(0, $result);
     }
 
     /**
-     * 创建测试用的 LockConfiguration 对象
+     * 测试复杂路由模式匹配
      */
-    private function createLockConfiguration(
-        string $routePattern,
-        int $timeoutSeconds,
-        bool $isEnabled,
-        ?string $description = null
-    ): LockConfiguration {
-        $config = new LockConfiguration();
-        $config->setRoutePattern($routePattern)
-               ->setTimeoutSeconds($timeoutSeconds)
-               ->setIsEnabled($isEnabled)
-               ->setDescription($description);
-        
-        return $config;
-    }
-
-    /**
-     * 设置 QueryBuilder Mock（用于获取启用的配置）
-     */
-    private function setupQueryBuilderMock(array $configurations): void
+    public function testComplexRoutePatternMatching(): void
     {
-        $this->entityManager
-            ->expects($this->once())
-            ->method('createQueryBuilder')
-            ->willReturn($this->queryBuilder);
+        // 通配符模式
+        $this->getDetector()->createConfiguration('/admin/*', 60, true);
+        $this->assertTrue($this->getDetector()->shouldLockRoute('/admin/users'));
+        $this->assertTrue($this->getDetector()->shouldLockRoute('/admin/settings'));
+        $this->assertFalse($this->getDetector()->shouldLockRoute('/admin/users/edit'));
 
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('select')
-            ->with('lc')
-            ->willReturnSelf();
+        // 多级通配符模式
+        $this->getDetector()->createConfiguration('/api/**', 90, true);
+        $this->assertTrue($this->getDetector()->shouldLockRoute('/api/v1/users'));
+        $this->assertTrue($this->getDetector()->shouldLockRoute('/api/v2/posts/123/comments'));
 
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('from')
-            ->with(LockConfiguration::class, 'lc')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('where')
-            ->with('lc.isEnabled = :enabled')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('setParameter')
-            ->with('enabled', true)
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('orderBy')
-            ->with('lc.routePattern', 'ASC')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('getQuery')
-            ->willReturn($this->query);
-
-        $this->query
-            ->expects($this->once())
-            ->method('getResult')
-            ->willReturn($configurations);
+        // 正则表达式模式
+        $this->getDetector()->createConfiguration('^/billing/(invoice|payment)', 120, true);
+        $this->assertTrue($this->getDetector()->shouldLockRoute('/billing/invoice'));
+        $this->assertTrue($this->getDetector()->shouldLockRoute('/billing/payment'));
+        $this->assertFalse($this->getDetector()->shouldLockRoute('/billing/report'));
     }
-
-    /**
-     * 设置 QueryBuilder Mock（用于获取所有配置）
-     */
-    private function setupQueryBuilderForAllConfigurations(array $configurations): void
-    {
-        $this->entityManager
-            ->expects($this->once())
-            ->method('createQueryBuilder')
-            ->willReturn($this->queryBuilder);
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('select')
-            ->with('lc')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('from')
-            ->with(LockConfiguration::class, 'lc')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('orderBy')
-            ->with('lc.createdAt', 'DESC')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('getQuery')
-            ->willReturn($this->query);
-
-        $this->query
-            ->expects($this->once())
-            ->method('getResult')
-            ->willReturn($configurations);
-    }
-
-    /**
-     * 设置 QueryBuilder Mock（用于更新操作）
-     */
-    private function setupQueryBuilderForUpdate(): void
-    {
-        $this->entityManager
-            ->expects($this->once())
-            ->method('createQueryBuilder')
-            ->willReturn($this->queryBuilder);
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('update')
-            ->with(LockConfiguration::class, 'lc')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->exactly(2))
-            ->method('set')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('where')
-            ->with('lc.id IN (:ids)')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->exactly(3))
-            ->method('setParameter')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('getQuery')
-            ->willReturn($this->query);
-    }
-} 
+}

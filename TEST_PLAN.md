@@ -14,7 +14,7 @@
 | **Controller 层** |  |  |  |  |
 | `src/Controller/IdleLockController.php` | `IdleLockControllerTest` | 🎮 HTTP 请求处理、重定向逻辑、密码验证 | ✅ 完成 | ✅ 11个测试通过 |
 | **EventListener 层** |  |  |  |  |
-| `src/EventListener/IdleLockListener.php` | `IdleLockListenerTest` | 🎯 请求拦截、路由过滤、锁定检查 | ⏳ 待完成 | ❌ |
+| `src/EventListener/IdleLockEventSubscriber.php` | `IdleLockEventSubscriberTest` | 🎯 请求拦截、路由过滤、锁定检查 | ⏳ 待完成 | ❌ |
 | **Twig 扩展** |  |  |  |  |
 | `src/Twig/IdleLockExtension.php` | `IdleLockExtensionTest` | 🎨 JavaScript 生成、Twig 函数、模板渲染 | ⏳ 待完成 | ❌ |
 | **DI 扩展** |  |  |  |  |
@@ -113,7 +113,7 @@
 剩余需要完成的测试用例：
 
 1. **EventListener 层**
-   - `IdleLockListenerTest` - 请求拦截、路由过滤、锁定检查
+   - `IdleLockEventSubscriberTest` - 请求拦截、路由过滤、锁定检查
 
 2. **Twig 扩展**
    - `IdleLockExtensionTest` - JavaScript 生成、Twig 函数、模板渲染

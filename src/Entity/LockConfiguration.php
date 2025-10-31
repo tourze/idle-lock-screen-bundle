@@ -4,63 +4,51 @@ namespace Tourze\IdleLockScreenBundle\Entity;
 
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\Mapping as ORM;
+use Symfony\Component\Validator\Constraints as Assert;
+use Tourze\DoctrineIndexedBundle\Attribute\IndexColumn;
+use Tourze\DoctrineTimestampBundle\Traits\TimestampableAware;
+use Tourze\IdleLockScreenBundle\Repository\LockConfigurationRepository;
 
 /**
  * 锁定配置实体
  * 用于配置哪些路由需要进行无操作锁定检查
  */
-#[ORM\Entity]
-#[ORM\Table(name: 'idle_lock_configuration')]
-#[ORM\Index(name: 'idx_route_pattern', columns: ['route_pattern'])]
-#[ORM\Index(name: 'idx_is_enabled', columns: ['is_enabled'])]
-class LockConfiguration
+#[ORM\Entity(repositoryClass: LockConfigurationRepository::class)]
+#[ORM\Table(name: 'idle_lock_configuration', options: ['comment' => '无操作锁定配置表'])]
+class LockConfiguration implements \Stringable
 {
+    use TimestampableAware;
+
     #[ORM\Id]
     #[ORM\GeneratedValue]
-    #[ORM\Column(type: Types::INTEGER)]
-    private ?int $id = null;
+    #[ORM\Column(type: Types::INTEGER, options: ['comment' => '主键ID'])]
+    private ?int $id = null; // @phpstan-ignore-line property.unusedType (Doctrine auto-assigns after persist)
 
-    /**
-     * 路由模式，支持通配符和正则表达式
-     * 例如：/billing/*, /account/bill/*, ^/admin/.*
-     */
-    #[ORM\Column(type: Types::STRING, length: 255)]
+    #[ORM\Column(type: Types::STRING, length: 255, options: ['comment' => '路由模式，支持通配符和正则表达式'])]
+    #[Assert\NotBlank(message: '路由模式不能为空')]
+    #[Assert\Length(max: 255, maxMessage: '路由模式长度不能超过{{ limit }}个字符')]
+    #[IndexColumn]
     private string $routePattern;
 
-    /**
-     * 无操作超时时间（秒）
-     */
-    #[ORM\Column(type: Types::INTEGER)]
+    #[ORM\Column(type: Types::INTEGER, options: ['comment' => '无操作超时时间（秒）'])]
+    #[Assert\NotBlank(message: '超时时间不能为空')]
+    #[Assert\Positive(message: '超时时间必须是正数')]
+    #[Assert\Range(min: 1, max: 86400, notInRangeMessage: '超时时间必须在{{ min }}到{{ max }}秒之间')]
     private int $timeoutSeconds = 60;
 
-    /**
-     * 是否启用此配置
-     */
-    #[ORM\Column(type: Types::BOOLEAN)]
+    #[ORM\Column(type: Types::BOOLEAN, options: ['comment' => '是否启用此配置'])]
+    #[Assert\NotNull(message: '启用状态不能为空')]
+    #[IndexColumn]
     private bool $isEnabled = true;
 
-    /**
-     * 配置描述
-     */
-    #[ORM\Column(type: Types::STRING, length: 500, nullable: true)]
+    #[ORM\Column(type: Types::STRING, length: 500, nullable: true, options: ['comment' => '配置描述'])]
+    #[Assert\Length(max: 500, maxMessage: '描述长度不能超过{{ limit }}个字符')]
     private ?string $description = null;
-
-    /**
-     * 创建时间
-     */
-    #[ORM\Column(type: Types::DATETIME_IMMUTABLE)]
-    private \DateTimeImmutable $createdAt;
-
-    /**
-     * 更新时间
-     */
-    #[ORM\Column(type: Types::DATETIME_IMMUTABLE)]
-    private \DateTimeImmutable $updatedAt;
 
     public function __construct()
     {
-        $this->createdAt = new \DateTimeImmutable();
-        $this->updatedAt = new \DateTimeImmutable();
+        $this->setCreateTime(new \DateTimeImmutable());
+        $this->setUpdateTime(new \DateTimeImmutable());
     }
 
     public function getId(): ?int
@@ -73,11 +61,10 @@ class LockConfiguration
         return $this->routePattern;
     }
 
-    public function setRoutePattern(string $routePattern): self
+    public function setRoutePattern(string $routePattern): void
     {
         $this->routePattern = $routePattern;
-        $this->updatedAt = new \DateTimeImmutable();
-        return $this;
+        $this->setUpdateTime(new \DateTimeImmutable());
     }
 
     public function getTimeoutSeconds(): int
@@ -85,11 +72,10 @@ class LockConfiguration
         return $this->timeoutSeconds;
     }
 
-    public function setTimeoutSeconds(int $timeoutSeconds): self
+    public function setTimeoutSeconds(int $timeoutSeconds): void
     {
         $this->timeoutSeconds = $timeoutSeconds;
-        $this->updatedAt = new \DateTimeImmutable();
-        return $this;
+        $this->setUpdateTime(new \DateTimeImmutable());
     }
 
     public function isEnabled(): bool
@@ -97,11 +83,10 @@ class LockConfiguration
         return $this->isEnabled;
     }
 
-    public function setIsEnabled(bool $isEnabled): self
+    public function setIsEnabled(bool $isEnabled): void
     {
         $this->isEnabled = $isEnabled;
-        $this->updatedAt = new \DateTimeImmutable();
-        return $this;
+        $this->setUpdateTime(new \DateTimeImmutable());
     }
 
     public function getDescription(): ?string
@@ -109,20 +94,14 @@ class LockConfiguration
         return $this->description;
     }
 
-    public function setDescription(?string $description): self
+    public function setDescription(?string $description): void
     {
         $this->description = $description;
-        $this->updatedAt = new \DateTimeImmutable();
-        return $this;
+        $this->setUpdateTime(new \DateTimeImmutable());
     }
 
-    public function getCreatedAt(): \DateTimeImmutable
+    public function __toString(): string
     {
-        return $this->createdAt;
-    }
-
-    public function getUpdatedAt(): \DateTimeImmutable
-    {
-        return $this->updatedAt;
+        return sprintf('%s (超时: %ds)', $this->routePattern, $this->timeoutSeconds);
     }
 }

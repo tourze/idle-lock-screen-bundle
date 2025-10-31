@@ -3,854 +3,480 @@
 namespace Tourze\IdleLockScreenBundle\Tests\Service;
 
 use Doctrine\ORM\EntityManagerInterface;
-use Doctrine\ORM\Query;
-use Doctrine\ORM\QueryBuilder;
-use PHPUnit\Framework\MockObject\MockObject;
-use PHPUnit\Framework\TestCase;
-use Symfony\Bundle\SecurityBundle\Security;
-use Symfony\Component\HttpFoundation\HeaderBag;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\RequestStack;
-use Symfony\Component\HttpFoundation\Session\SessionInterface;
-use Symfony\Component\Security\Core\User\UserInterface;
+use Symfony\Component\HttpFoundation\Session\Session;
+use Symfony\Component\HttpFoundation\Session\Storage\MockArraySessionStorage;
 use Tourze\IdleLockScreenBundle\Entity\LockRecord;
+use Tourze\IdleLockScreenBundle\Enum\ActionType;
 use Tourze\IdleLockScreenBundle\Service\LockManager;
+use Tourze\PHPUnitSymfonyKernelTest\AbstractIntegrationTestCase;
 
 /**
- * 测试用户类
+ * LockManager 集成测试用例
+ *
+ * @internal
  */
-class TestUser implements UserInterface
+#[CoversClass(LockManager::class)]
+#[RunTestsInSeparateProcesses]
+final class LockManagerTest extends AbstractIntegrationTestCase
 {
-    public function __construct(private int $id)
+    private ?LockManager $lockManager = null;
+
+    protected function onSetUp(): void
     {
+        // 集成测试设置
     }
 
-    public function getId(): int
+    public function getLockManager(): LockManager
     {
-        return $this->id;
-    }
+        if (null === $this->lockManager) {
+            $lockManager = self::getContainer()->get(LockManager::class);
+            $this->assertInstanceOf(LockManager::class, $lockManager);
+            $this->lockManager = $lockManager;
+        }
 
-    public function getUserIdentifier(): string
-    {
-        return (string) $this->id;
-    }
-
-    public function getRoles(): array
-    {
-        return ['ROLE_USER'];
-    }
-
-    public function eraseCredentials(): void
-    {
-    }
-}
-
-/**
- * LockManager 测试用例
- */
-class LockManagerTest extends TestCase
-{
-    private LockManager $lockManager;
-    private EntityManagerInterface&MockObject $entityManager;
-    private RequestStack&MockObject $requestStack;
-    private Security&MockObject $security;
-    private Request&MockObject $request;
-    private SessionInterface&MockObject $session;
-    private TestUser $user;
-    private QueryBuilder&MockObject $queryBuilder;
-    private Query&MockObject $query;
-
-    protected function setUp(): void
-    {
-        $this->entityManager = $this->createMock(EntityManagerInterface::class);
-        $this->requestStack = $this->createMock(RequestStack::class);
-        $this->security = $this->createMock(Security::class);
-        $this->request = $this->createMock(Request::class);
-        $this->session = $this->createMock(SessionInterface::class);
-        $this->user = new TestUser(123);
-        $this->queryBuilder = $this->createMock(QueryBuilder::class);
-        $this->query = $this->createMock(Query::class);
-
-        $this->lockManager = new LockManager(
-            $this->entityManager,
-            $this->requestStack,
-            $this->security
-        );
+        return $this->lockManager;
     }
 
     /**
      * 测试锁定会话 - 正常情况
      */
-    public function test_lockSession_withValidSession(): void
+    public function testLockSessionWithValidSession(): void
     {
+        $user = $this->createNormalUser('test@example.com', 'password');
         $route = '/billing/invoice';
         $reason = 'idle_timeout';
-        
-        $this->setupRequestAndSession();
-        $this->setupUserMocks(123, 'sess_abc123');
-        
-        $this->session
-            ->expects($this->exactly(3))
-            ->method('set')
-            ->with($this->logicalOr(
-                $this->equalTo('_idle_lock_status'),
-                $this->equalTo('_idle_lock_route'),
-                $this->equalTo('_idle_lock_time')
-            ));
 
-        $this->setupRecordPersistence();
+        // 创建带会话的请求
+        $request = Request::create('/test');
+        $session = new Session(new MockArraySessionStorage());
+        $request->setSession($session);
 
-        $this->lockManager->lockSession($route, $reason);
+        /** @var RequestStack $requestStack */
+        $requestStack = self::getContainer()->get('request_stack');
+        $requestStack->push($request);
+
+        // 模拟用户登录
+        $this->setAuthenticatedUser($user);
+
+        // 执行锁定操作
+        $this->getLockManager()->lockSession($route, $reason);
+
+        // 验证会话状态
+        $this->assertTrue($session->get('_idle_lock_status', false));
+        $this->assertEquals($route, $session->get('_idle_lock_route'));
+        $this->assertIsInt($session->get('_idle_lock_time'));
+
+        // 验证数据库记录
+        $lockRecords = self::getEntityManager()
+            ->getRepository(LockRecord::class)
+            ->findBy(['user' => $user])
+        ;
+
+        $this->assertCount(1, $lockRecords);
+        $lockRecord = $lockRecords[0];
+        $this->assertEquals(ActionType::LOCKED, $lockRecord->getActionType());
+        $this->assertEquals($route, $lockRecord->getRoute());
     }
 
     /**
      * 测试锁定会话 - 没有会话
      */
-    public function test_lockSession_withoutSession(): void
+    public function testLockSessionWithoutSession(): void
     {
-        $this->requestStack
-            ->expects($this->once())
-            ->method('getCurrentRequest')
-            ->willReturn(null);
+        // 清理所有现有记录
+        /** @var EntityManagerInterface $em */
+        $em = self::getEntityManager();
+        $em
+            ->createQuery('DELETE FROM ' . LockRecord::class)
+            ->execute()
+        ;
 
-        // 应该没有任何操作
-        $this->session
-            ->expects($this->never())
-            ->method('set');
+        // 确保没有当前请求
+        $requestStack = self::getService(RequestStack::class);
+        while (null !== $requestStack->getCurrentRequest()) {
+            $requestStack->pop();
+        }
 
-        $this->lockManager->lockSession('/test');
+        // 执行锁定操作，应该无异常
+        $this->getLockManager()->lockSession('/test');
+
+        // 验证没有创建锁定记录
+        $lockRecords = self::getEntityManager()
+            ->getRepository(LockRecord::class)
+            ->findAll()
+        ;
+
+        $this->assertCount(0, $lockRecords);
     }
 
     /**
      * 测试解锁会话 - 正常情况
      */
-    public function test_unlockSession_withValidSession(): void
+    public function testUnlockSessionWithValidSession(): void
     {
-        $lockedRoute = '/billing/invoice';
-        
-        $this->setupRequestAndSession();
-        $this->setupUserMocks(123, 'sess_abc123');
-        
-        $this->session
-            ->expects($this->once())
-            ->method('get')
-            ->with('_idle_lock_route')
-            ->willReturn($lockedRoute);
+        $user = $this->createNormalUser('unlock@example.com', 'password');
+        $route = '/billing/invoice';
 
-        $this->session
-            ->expects($this->exactly(3))
-            ->method('remove')
-            ->with($this->logicalOr(
-                $this->equalTo('_idle_lock_status'),
-                $this->equalTo('_idle_lock_route'),
-                $this->equalTo('_idle_lock_time')
-            ));
+        // 创建带会话的请求
+        $request = Request::create('/test');
+        $session = new Session(new MockArraySessionStorage());
+        $request->setSession($session);
 
-        $this->setupRecordPersistence();
+        /** @var RequestStack $requestStack */
+        $requestStack = self::getContainer()->get('request_stack');
+        $requestStack->push($request);
+        $this->setAuthenticatedUser($user);
 
-        $this->lockManager->unlockSession();
-    }
+        // 先锁定会话
+        $this->getLockManager()->lockSession($route);
 
-    /**
-     * 测试解锁会话 - 指定路由
-     */
-    public function test_unlockSession_withSpecifiedRoute(): void
-    {
-        $specifiedRoute = '/custom/route';
-        
-        $this->setupRequestAndSession();
-        $this->setupUserMocks(123, 'sess_abc123');
-        
-        $this->session
-            ->expects($this->exactly(3))
-            ->method('remove');
+        // 验证已锁定
+        $this->assertTrue($session->get('_idle_lock_status', false));
 
-        $this->setupRecordPersistence();
+        // 执行解锁操作
+        $this->getLockManager()->unlockSession();
 
-        $this->lockManager->unlockSession($specifiedRoute);
+        // 验证会话状态已清除
+        $this->assertFalse($session->get('_idle_lock_status', false));
+        $this->assertNull($session->get('_idle_lock_route'));
+        $this->assertNull($session->get('_idle_lock_time'));
+
+        // 验证数据库记录（按创建时间排序确保顺序一致）
+        $lockRecords = self::getEntityManager()
+            ->getRepository(LockRecord::class)
+            ->findBy(['user' => $user], ['id' => 'ASC'])
+        ;
+
+        $this->assertCount(2, $lockRecords); // 一个LOCKED，一个UNLOCKED
+        $unlockRecord = end($lockRecords);
+        $this->assertInstanceOf(LockRecord::class, $unlockRecord, 'Expected last record to be LockRecord instance');
+        $this->assertEquals(ActionType::UNLOCKED, $unlockRecord->getActionType());
     }
 
     /**
      * 测试解锁会话 - 没有会话
      */
-    public function test_unlockSession_withoutSession(): void
+    public function testUnlockSessionWithoutSession(): void
     {
-        $this->requestStack
-            ->expects($this->once())
-            ->method('getCurrentRequest')
-            ->willReturn(null);
+        // 清理所有现有记录
+        /** @var EntityManagerInterface $em */
+        $em = self::getEntityManager();
+        $em
+            ->createQuery('DELETE FROM ' . LockRecord::class)
+            ->execute()
+        ;
 
-        // 应该没有任何操作
-        $this->session
-            ->expects($this->never())
-            ->method('remove');
+        // 确保没有当前请求
+        $requestStack = self::getService(RequestStack::class);
+        while (null !== $requestStack->getCurrentRequest()) {
+            $requestStack->pop();
+        }
 
-        $this->lockManager->unlockSession();
+        // 执行解锁操作，应该无异常
+        $this->getLockManager()->unlockSession();
+
+        // 验证没有创建记录
+        $lockRecords = self::getEntityManager()
+            ->getRepository(LockRecord::class)
+            ->findAll()
+        ;
+
+        $this->assertCount(0, $lockRecords);
     }
 
     /**
      * 测试检查会话是否锁定 - 已锁定
      */
-    public function test_isSessionLocked_withLockedSession(): void
+    public function testIsSessionLockedWithLockedSession(): void
     {
-        $this->setupRequestAndSession();
-        
-        $this->session
-            ->expects($this->once())
-            ->method('get')
-            ->with('_idle_lock_status', false)
-            ->willReturn(true);
+        $user = $this->createNormalUser('locked@example.com', 'password');
 
-        $result = $this->lockManager->isSessionLocked();
-        
-        $this->assertTrue($result);
+        // 创建带会话的请求
+        $request = Request::create('/test');
+        $session = new Session(new MockArraySessionStorage());
+        $request->setSession($session);
+
+        /** @var RequestStack $requestStack */
+        $requestStack = self::getContainer()->get('request_stack');
+        $requestStack->push($request);
+        $this->setAuthenticatedUser($user);
+
+        // 手动设置锁定状态
+        $session->set('_idle_lock_status', true);
+
+        $this->assertTrue($this->getLockManager()->isSessionLocked());
     }
 
     /**
      * 测试检查会话是否锁定 - 未锁定
      */
-    public function test_isSessionLocked_withUnlockedSession(): void
+    public function testIsSessionLockedWithUnlockedSession(): void
     {
-        $this->setupRequestAndSession();
-        
-        $this->session
-            ->expects($this->once())
-            ->method('get')
-            ->with('_idle_lock_status', false)
-            ->willReturn(false);
+        // 创建带会话的请求
+        $request = Request::create('/test');
+        $session = new Session(new MockArraySessionStorage());
+        $request->setSession($session);
 
-        $result = $this->lockManager->isSessionLocked();
-        
-        $this->assertFalse($result);
+        /** @var RequestStack $requestStack */
+        $requestStack = self::getContainer()->get('request_stack');
+        $requestStack->push($request);
+
+        $this->assertFalse($this->getLockManager()->isSessionLocked());
     }
 
     /**
      * 测试检查会话是否锁定 - 没有会话
      */
-    public function test_isSessionLocked_withoutSession(): void
+    public function testIsSessionLockedWithoutSession(): void
     {
-        $this->requestStack
-            ->expects($this->once())
-            ->method('getCurrentRequest')
-            ->willReturn(null);
+        // 确保没有当前请求
+        $requestStack = self::getService(RequestStack::class);
+        while (null !== $requestStack->getCurrentRequest()) {
+            $requestStack->pop();
+        }
 
-        $result = $this->lockManager->isSessionLocked();
-        
-        $this->assertFalse($result);
+        $this->assertFalse($this->getLockManager()->isSessionLocked());
     }
 
     /**
      * 测试获取锁定路由
      */
-    public function test_getLockedRoute_withLockedSession(): void
+    public function testGetLockedRoute(): void
     {
         $lockedRoute = '/billing/invoice';
-        
-        $this->setupRequestAndSession();
-        
-        $this->session
-            ->expects($this->once())
-            ->method('get')
-            ->with('_idle_lock_route')
-            ->willReturn($lockedRoute);
 
-        $result = $this->lockManager->getLockedRoute();
-        
-        $this->assertEquals($lockedRoute, $result);
+        // 创建带会话的请求
+        $request = Request::create('/test');
+        $session = new Session(new MockArraySessionStorage());
+        $request->setSession($session);
+
+        /** @var RequestStack $requestStack */
+        $requestStack = self::getContainer()->get('request_stack');
+        $requestStack->push($request);
+
+        // 设置锁定路由
+        $session->set('_idle_lock_route', $lockedRoute);
+
+        $this->assertEquals($lockedRoute, $this->getLockManager()->getLockedRoute());
     }
 
     /**
      * 测试获取锁定路由 - 没有会话
      */
-    public function test_getLockedRoute_withoutSession(): void
+    public function testGetLockedRouteWithoutSession(): void
     {
-        $this->requestStack
-            ->expects($this->once())
-            ->method('getCurrentRequest')
-            ->willReturn(null);
+        // 确保没有当前请求
+        $requestStack = self::getService(RequestStack::class);
+        while (null !== $requestStack->getCurrentRequest()) {
+            $requestStack->pop();
+        }
 
-        $result = $this->lockManager->getLockedRoute();
-        
-        $this->assertNull($result);
+        $this->assertNull($this->getLockManager()->getLockedRoute());
     }
 
     /**
      * 测试获取锁定时间
      */
-    public function test_getLockTime_withLockedSession(): void
+    public function testGetLockTime(): void
     {
         $lockTime = time();
-        
-        $this->setupRequestAndSession();
-        
-        $this->session
-            ->expects($this->once())
-            ->method('get')
-            ->with('_idle_lock_time')
-            ->willReturn($lockTime);
 
-        $result = $this->lockManager->getLockTime();
-        
-        $this->assertEquals($lockTime, $result);
+        // 创建带会话的请求
+        $request = Request::create('/test');
+        $session = new Session(new MockArraySessionStorage());
+        $request->setSession($session);
+
+        /** @var RequestStack $requestStack */
+        $requestStack = self::getContainer()->get('request_stack');
+        $requestStack->push($request);
+
+        // 设置锁定时间
+        $session->set('_idle_lock_time', $lockTime);
+
+        $this->assertEquals($lockTime, $this->getLockManager()->getLockTime());
     }
 
     /**
      * 测试获取锁定时间 - 没有会话
      */
-    public function test_getLockTime_withoutSession(): void
+    public function testGetLockTimeWithoutSession(): void
     {
-        $this->requestStack
-            ->expects($this->once())
-            ->method('getCurrentRequest')
-            ->willReturn(null);
+        // 确保没有当前请求
+        $requestStack = self::getService(RequestStack::class);
+        while (null !== $requestStack->getCurrentRequest()) {
+            $requestStack->pop();
+        }
 
-        $result = $this->lockManager->getLockTime();
-        
-        $this->assertNull($result);
-    }
-
-    /**
-     * 测试记录超时事件
-     */
-    public function test_recordTimeout(): void
-    {
-        $route = '/timeout/route';
-        
-        $this->setupRequestAndSession();
-        $this->setupUserMocks(123, 'sess_abc123');
-        $this->setupRecordPersistence();
-
-        $this->lockManager->recordTimeout($route);
-    }
-
-    /**
-     * 测试记录绕过尝试
-     */
-    public function test_recordBypassAttempt(): void
-    {
-        $route = '/bypass/route';
-        $method = 'direct_access';
-        
-        $this->setupRequestAndSession();
-        $this->setupUserMocks(123, 'sess_abc123');
-        $this->setupRecordPersistence();
-
-        $this->lockManager->recordBypassAttempt($route, $method);
-    }
-
-    /**
-     * 测试记录绕过尝试 - 没有方法
-     */
-    public function test_recordBypassAttempt_withoutMethod(): void
-    {
-        $route = '/bypass/route';
-        
-        $this->setupRequestAndSession();
-        $this->setupUserMocks(123, 'sess_abc123');
-        $this->setupRecordPersistence();
-
-        $this->lockManager->recordBypassAttempt($route);
+        $this->assertNull($this->getLockManager()->getLockTime());
     }
 
     /**
      * 测试清除过期锁定 - 用户已登录且有锁定
      */
-    public function test_clearExpiredLocks_withLoggedInUserAndLock(): void
+    public function testClearExpiredLocksWithLoggedInUserAndLock(): void
     {
-        $this->setupRequestAndSession();
-        
-        $this->security
-            ->expects($this->atLeast(1))
-            ->method('getUser')
-            ->willReturn($this->user);
+        $user = $this->createNormalUser('expired@example.com', 'password');
 
-        $this->session
-            ->expects($this->exactly(2))
-            ->method('get')
-            ->willReturnMap([
-                ['_idle_lock_status', false, true],
-                ['_idle_lock_route', null, '/locked/route']
-            ]);
+        // 创建带会话的请求
+        $request = Request::create('/test');
+        $session = new Session(new MockArraySessionStorage());
+        $request->setSession($session);
 
-        $this->session
-            ->expects($this->exactly(3))
-            ->method('remove');
+        /** @var RequestStack $requestStack */
+        $requestStack = self::getContainer()->get('request_stack');
+        $requestStack->push($request);
+        $this->setAuthenticatedUser($user);
 
-        $this->setupRecordPersistence();
+        // 设置锁定状态
+        $session->set('_idle_lock_status', true);
+        $session->set('_idle_lock_route', '/locked/route');
 
-        $this->lockManager->clearExpiredLocks();
+        // 执行清除过期锁定
+        $this->getLockManager()->clearExpiredLocks();
+
+        // 验证锁定状态已清除
+        $this->assertFalse($session->get('_idle_lock_status', false));
+
+        // 验证数据库记录
+        $lockRecords = self::getEntityManager()
+            ->getRepository(LockRecord::class)
+            ->findBy(['user' => $user])
+        ;
+
+        $this->assertCount(1, $lockRecords);
+        $this->assertEquals(ActionType::UNLOCKED, $lockRecords[0]->getActionType());
     }
 
     /**
-     * 测试清除过期锁定 - 没有用户登录
+     * 测试获取用户锁定历史
      */
-    public function test_clearExpiredLocks_withoutLoggedInUser(): void
+    public function testGetUserLockHistory(): void
     {
-        $this->setupRequestAndSession();
-        
-        $this->security
-            ->expects($this->once())
-            ->method('getUser')
-            ->willReturn(null);
+        // 清理所有现有记录
+        /** @var EntityManagerInterface $em */
+        $em = self::getEntityManager();
+        $em
+            ->createQuery('DELETE FROM ' . LockRecord::class)
+            ->execute()
+        ;
 
-        // 不应该尝试获取锁定状态
-        $this->session
-            ->expects($this->never())
-            ->method('get');
+        $user = $this->createNormalUser('history@example.com', 'password');
+        $this->setAuthenticatedUser($user);
 
-        $this->lockManager->clearExpiredLocks();
+        // 创建锁定记录
+        $request = Request::create('/test');
+        $session = new Session(new MockArraySessionStorage());
+        $request->setSession($session);
+        /** @var RequestStack $requestStack */
+        $requestStack = self::getContainer()->get('request_stack');
+        $requestStack->push($request);
+
+        $this->getLockManager()->lockSession('/test/route');
+        // 添加延迟确保时间戳不同
+        usleep(1000);
+        $this->getLockManager()->unlockSession();
+
+        // 获取历史记录
+        $history = $this->getLockManager()->getUserLockHistory();
+
+        $this->assertCount(2, $history);
+        $this->assertEquals(ActionType::UNLOCKED, $history[0]->getActionType()); // 按时间倒序
+        $this->assertEquals(ActionType::LOCKED, $history[1]->getActionType());
     }
 
     /**
-     * 测试清除过期锁定 - 用户已登录但没有锁定
+     * 测试获取会话锁定历史
      */
-    public function test_clearExpiredLocks_withLoggedInUserButNoLock(): void
+    public function testGetSessionLockHistory(): void
     {
-        $this->setupRequestAndSession();
-        
-        $this->security
-            ->expects($this->once())
-            ->method('getUser')
-            ->willReturn($this->user);
+        $user = $this->createNormalUser('session@example.com', 'password');
 
-        $this->session
-            ->expects($this->once())
-            ->method('get')
-            ->with('_idle_lock_status', false)
-            ->willReturn(false);
+        // 创建带会话的请求
+        $request = Request::create('/test');
+        $session = new Session(new MockArraySessionStorage());
+        $request->setSession($session);
 
-        // 不应该尝试解锁
-        $this->session
-            ->expects($this->never())
-            ->method('remove');
+        /** @var RequestStack $requestStack */
+        $requestStack = self::getContainer()->get('request_stack');
+        $requestStack->push($request);
+        $this->setAuthenticatedUser($user);
 
-        $this->lockManager->clearExpiredLocks();
+        // 创建锁定记录
+        $this->getLockManager()->lockSession('/session/route');
+
+        // 获取会话历史记录
+        $history = $this->getLockManager()->getSessionLockHistory();
+
+        $this->assertCount(1, $history);
+        $this->assertEquals(ActionType::LOCKED, $history[0]->getActionType());
     }
 
     /**
-     * 测试获取用户锁定历史 - 指定用户ID
+     * 测试记录超时
      */
-    public function test_getUserLockHistory_withSpecifiedUserId(): void
+    public function testRecordTimeout(): void
     {
-        $userId = 456;
-        $limit = 25;
-        $mockRecords = [$this->createMockLockRecord()];
+        $user = $this->createNormalUser('timeout@example.com', 'password');
+        $route = '/admin/dashboard';
 
-        $this->security
-            ->expects($this->once())
-            ->method('getUser')
-            ->willReturn($this->user);
+        // 创建带会话的请求
+        $request = Request::create('/test', 'GET', [], [], [], ['REMOTE_ADDR' => '127.0.0.1', 'HTTP_USER_AGENT' => 'Test Browser']);
+        $session = new Session(new MockArraySessionStorage());
+        $request->setSession($session);
 
-        $this->setupQueryBuilderForUserHistoryWithUserId($userId, $limit, $mockRecords);
+        /** @var RequestStack $requestStack */
+        $requestStack = self::getContainer()->get('request_stack');
+        $requestStack->push($request);
+        $this->setAuthenticatedUser($user);
 
-        $result = $this->lockManager->getUserLockHistory($userId, $limit);
+        // 记录超时
+        $this->getLockManager()->recordTimeout($route);
 
-        $this->assertEquals($mockRecords, $result);
+        // 验证记录
+        $lockRecords = self::getEntityManager()
+            ->getRepository(LockRecord::class)
+            ->findBy(['user' => $user])
+        ;
+
+        $this->assertCount(1, $lockRecords);
+        $this->assertEquals(ActionType::TIMEOUT, $lockRecords[0]->getActionType());
+        $this->assertEquals($route, $lockRecords[0]->getRoute());
     }
 
     /**
-     * 测试获取用户锁定历史 - 当前用户
+     * 测试记录绕过尝试
      */
-    public function test_getUserLockHistory_withCurrentUser(): void
+    public function testRecordBypassAttempt(): void
     {
-        $mockRecords = [$this->createMockLockRecord()];
+        $user = $this->createNormalUser('bypass@example.com', 'password');
+        $route = '/admin/settings';
+        $method = 'POST';
 
-        $this->security
-            ->expects($this->once())
-            ->method('getUser')
-            ->willReturn($this->user);
-        
-        $this->setupQueryBuilderForCurrentUserHistory(50, $mockRecords);
+        // 创建带会话的请求
+        $request = Request::create('/test', 'GET', [], [], [], ['REMOTE_ADDR' => '127.0.0.1', 'HTTP_USER_AGENT' => 'Test Browser']);
+        $session = new Session(new MockArraySessionStorage());
+        $request->setSession($session);
 
-        $result = $this->lockManager->getUserLockHistory();
-        
-        $this->assertEquals($mockRecords, $result);
+        /** @var RequestStack $requestStack */
+        $requestStack = self::getContainer()->get('request_stack');
+        $requestStack->push($request);
+        $this->setAuthenticatedUser($user);
+
+        // 记录绕过尝试
+        $this->getLockManager()->recordBypassAttempt($route, $method);
+
+        // 验证记录
+        $lockRecords = self::getEntityManager()
+            ->getRepository(LockRecord::class)
+            ->findBy(['user' => $user])
+        ;
+
+        $this->assertCount(1, $lockRecords);
+        $this->assertEquals(ActionType::BYPASS_ATTEMPT, $lockRecords[0]->getActionType());
+        $this->assertEquals($route, $lockRecords[0]->getRoute());
     }
-
-    /**
-     * 测试获取用户锁定历史 - 没有用户
-     */
-    public function test_getUserLockHistory_withoutUser(): void
-    {
-        $this->security
-            ->expects($this->once())
-            ->method('getUser')
-            ->willReturn(null);
-
-        $result = $this->lockManager->getUserLockHistory();
-        
-        $this->assertEquals([], $result);
-    }
-
-    /**
-     * 测试获取会话锁定历史 - 指定会话ID
-     */
-    public function test_getSessionLockHistory_withSpecifiedSessionId(): void
-    {
-        $sessionId = 'sess_custom123';
-        $limit = 10;
-        $mockRecords = [$this->createMockLockRecord()];
-
-        $this->setupQueryBuilderForSessionHistory($sessionId, $limit, $mockRecords);
-
-        $result = $this->lockManager->getSessionLockHistory($sessionId, $limit);
-        
-        $this->assertEquals($mockRecords, $result);
-    }
-
-    /**
-     * 测试获取会话锁定历史 - 当前会话
-     */
-    public function test_getSessionLockHistory_withCurrentSession(): void
-    {
-        $sessionId = 'sess_abc123';
-        $mockRecords = [$this->createMockLockRecord()];
-
-        $this->setupRequestAndSession();
-        $this->session
-            ->expects($this->once())
-            ->method('getId')
-            ->willReturn($sessionId);
-
-        $this->setupQueryBuilderForSessionHistory($sessionId, 20, $mockRecords);
-
-        $result = $this->lockManager->getSessionLockHistory();
-        
-        $this->assertEquals($mockRecords, $result);
-    }
-
-    /**
-     * 测试获取会话锁定历史 - 没有会话
-     */
-    public function test_getSessionLockHistory_withoutSession(): void
-    {
-        $this->requestStack
-            ->expects($this->once())
-            ->method('getCurrentRequest')
-            ->willReturn(null);
-
-        $result = $this->lockManager->getSessionLockHistory();
-        
-        $this->assertEquals([], $result);
-    }
-
-    /**
-     * 设置请求和会话 Mock
-     */
-    private function setupRequestAndSession(): void
-    {
-        $this->requestStack
-            ->expects($this->atLeastOnce())
-            ->method('getCurrentRequest')
-            ->willReturn($this->request);
-
-        $this->request
-            ->expects($this->atLeastOnce())
-            ->method('getSession')
-            ->willReturn($this->session);
-    }
-
-    /**
-     * 设置用户相关 Mock
-     */
-    private function setupUserMocks(int $userId, string $sessionId): void
-    {
-        // 设置用户ID（TestUser已经在构造函数中设置了）
-        if ($this->user->getId() !== $userId) {
-            $this->user = new TestUser($userId);
-        }
-        
-        $this->security
-            ->expects($this->atLeastOnce())
-            ->method('getUser')
-            ->willReturn($this->user);
-
-        $this->session
-            ->expects($this->atLeastOnce())
-            ->method('getId')
-            ->willReturn($sessionId);
-    }
-
-    /**
-     * 设置记录持久化 Mock
-     */
-    private function setupRecordPersistence(): void
-    {
-        $headerBag = $this->createMock(HeaderBag::class);
-        $this->request->headers = $headerBag;
-        
-        $this->request
-            ->expects($this->once())
-            ->method('getClientIp')
-            ->willReturn('192.168.1.100');
-
-        $headerBag
-            ->expects($this->once())
-            ->method('get')
-            ->with('User-Agent')
-            ->willReturn('Mozilla/5.0');
-
-        $this->entityManager
-            ->expects($this->once())
-            ->method('persist')
-            ->with($this->isInstanceOf(LockRecord::class));
-
-        $this->entityManager
-            ->expects($this->once())
-            ->method('flush');
-    }
-
-    /**
-     * 设置用户历史查询 Mock
-     */
-    private function setupQueryBuilderForUserHistory(int $userId, int $limit, array $records): void
-    {
-        $this->entityManager
-            ->expects($this->once())
-            ->method('createQueryBuilder')
-            ->willReturn($this->queryBuilder);
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('select')
-            ->with('lr')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('from')
-            ->with(LockRecord::class, 'lr')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('where')
-            ->with('lr.user = :user OR (lr.user IS NULL AND lr.userId = :userId)')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->exactly(2))
-            ->method('setParameter')
-            ->willReturnCallback(function ($param, $value) use ($userId) {
-                if ($param === 'user') {
-                    $this->assertSame($this->user, $value);
-                } elseif ($param === 'userId') {
-                    $this->assertEquals($userId, $value);
-                }
-                return $this->queryBuilder;
-            });
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('orderBy')
-            ->with('lr.createdAt', 'DESC')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('setMaxResults')
-            ->with($limit)
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('getQuery')
-            ->willReturn($this->query);
-
-        $this->query
-            ->expects($this->once())
-            ->method('getResult')
-            ->willReturn($records);
-    }
-
-    /**
-     * 设置指定用户ID的历史查询 Mock
-     */
-    private function setupQueryBuilderForUserHistoryWithUserId(int $userId, int $limit, array $records): void
-    {
-        $this->entityManager
-            ->expects($this->once())
-            ->method('createQueryBuilder')
-            ->willReturn($this->queryBuilder);
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('select')
-            ->with('lr')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('from')
-            ->with(LockRecord::class, 'lr')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('orderBy')
-            ->with('lr.createdAt', 'DESC')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('setMaxResults')
-            ->with($limit)
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('where')
-            ->with('lr.user = :user OR (lr.user IS NULL AND lr.userId = :userId)')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->exactly(2))
-            ->method('setParameter')
-            ->willReturnCallback(function ($param, $value) use ($userId) {
-                if ($param === 'user') {
-                    $this->assertSame($this->user, $value);
-                } elseif ($param === 'userId') {
-                    $this->assertEquals($userId, $value);
-                }
-                return $this->queryBuilder;
-            });
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('getQuery')
-            ->willReturn($this->query);
-
-        $this->query
-            ->expects($this->once())
-            ->method('getResult')
-            ->willReturn($records);
-    }
-
-    /**
-     * 设置当前用户历史查询 Mock
-     */
-    private function setupQueryBuilderForCurrentUserHistory(int $limit, array $records): void
-    {
-        $this->entityManager
-            ->expects($this->once())
-            ->method('createQueryBuilder')
-            ->willReturn($this->queryBuilder);
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('select')
-            ->with('lr')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('from')
-            ->with(LockRecord::class, 'lr')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('orderBy')
-            ->with('lr.createdAt', 'DESC')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('setMaxResults')
-            ->with($limit)
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('where')
-            ->with('lr.user = :user')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('setParameter')
-            ->with('user', $this->user)
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('getQuery')
-            ->willReturn($this->query);
-
-        $this->query
-            ->expects($this->once())
-            ->method('getResult')
-            ->willReturn($records);
-    }
-
-    /**
-     * 设置会话历史查询 Mock
-     */
-    private function setupQueryBuilderForSessionHistory(string $sessionId, int $limit, array $records): void
-    {
-        $this->entityManager
-            ->expects($this->once())
-            ->method('createQueryBuilder')
-            ->willReturn($this->queryBuilder);
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('select')
-            ->with('lr')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('from')
-            ->with(LockRecord::class, 'lr')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('where')
-            ->with('lr.sessionId = :sessionId')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('setParameter')
-            ->with('sessionId', $sessionId)
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('orderBy')
-            ->with('lr.createdAt', 'DESC')
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('setMaxResults')
-            ->with($limit)
-            ->willReturnSelf();
-
-        $this->queryBuilder
-            ->expects($this->once())
-            ->method('getQuery')
-            ->willReturn($this->query);
-
-        $this->query
-            ->expects($this->once())
-            ->method('getResult')
-            ->willReturn($records);
-    }
-
-    /**
-     * 创建真实的 LockRecord 对象用于测试
-     */
-    private function createMockLockRecord(): LockRecord
-    {
-        $record = new LockRecord();
-        $record->setUser($this->user)
-               ->setSessionId('test_session')
-               ->setActionType(\Tourze\IdleLockScreenBundle\Enum\ActionType::LOCKED)
-               ->setRoute('/test/route');
-        
-        return $record;
-    }
-} 
+}

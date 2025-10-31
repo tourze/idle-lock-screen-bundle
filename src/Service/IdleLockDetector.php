@@ -4,16 +4,18 @@ namespace Tourze\IdleLockScreenBundle\Service;
 
 use Doctrine\ORM\EntityManagerInterface;
 use Tourze\IdleLockScreenBundle\Entity\LockConfiguration;
+use Tourze\IdleLockScreenBundle\Repository\LockConfigurationRepository;
 
 /**
  * 无操作锁定检测服务
  * 负责检测路由是否需要锁定以及获取相关配置
  */
-class IdleLockDetector
+readonly class IdleLockDetector
 {
     public function __construct(
-        private readonly EntityManagerInterface $entityManager,
-        private readonly RoutePatternMatcher $routePatternMatcher
+        private EntityManagerInterface $entityManager,
+        private LockConfigurationRepository $lockConfigurationRepository,
+        private RoutePatternMatcher $routePatternMatcher,
     ) {
     }
 
@@ -23,7 +25,8 @@ class IdleLockDetector
     public function shouldLockRoute(string $route): bool
     {
         $configuration = $this->getRouteConfiguration($route);
-        return $configuration !== null;
+
+        return null !== $configuration;
     }
 
     /**
@@ -48,35 +51,41 @@ class IdleLockDetector
     public function getRouteTimeout(string $route): int
     {
         $configuration = $this->getRouteConfiguration($route);
+
         return $configuration?->getTimeoutSeconds() ?? 60;
     }
 
     /**
      * 获取所有启用的锁定配置
+     * @return LockConfiguration[]
      */
     public function getEnabledConfigurations(): array
     {
-        $qb = $this->entityManager->createQueryBuilder();
-        $qb->select('lc')
-           ->from(LockConfiguration::class, 'lc')
-           ->where('lc.isEnabled = :enabled')
-           ->setParameter('enabled', true)
-           ->orderBy('lc.routePattern', 'ASC');
+        $qb = $this->lockConfigurationRepository->createQueryBuilder('lc');
+        $qb->where('lc.isEnabled = :enabled')
+            ->setParameter('enabled', true)
+            ->orderBy('lc.routePattern', 'ASC')
+        ;
 
-        return $qb->getQuery()->getResult();
+        $result = $qb->getQuery()->getResult();
+
+        /** @var LockConfiguration[] $result */
+        return is_array($result) ? $result : [];
     }
 
     /**
      * 获取所有配置（包括禁用的）
+     * @return LockConfiguration[]
      */
     public function getAllConfigurations(): array
     {
-        $qb = $this->entityManager->createQueryBuilder();
-        $qb->select('lc')
-           ->from(LockConfiguration::class, 'lc')
-           ->orderBy('lc.createdAt', 'DESC');
+        $qb = $this->lockConfigurationRepository->createQueryBuilder('lc');
+        $qb->orderBy('lc.createTime', 'DESC');
 
-        return $qb->getQuery()->getResult();
+        $result = $qb->getQuery()->getResult();
+
+        /** @var LockConfiguration[] $result */
+        return is_array($result) ? $result : [];
     }
 
     /**
@@ -86,13 +95,13 @@ class IdleLockDetector
         string $routePattern,
         int $timeoutSeconds = 60,
         bool $isEnabled = true,
-        ?string $description = null
+        ?string $description = null,
     ): LockConfiguration {
         $config = new LockConfiguration();
-        $config->setRoutePattern($routePattern)
-               ->setTimeoutSeconds($timeoutSeconds)
-               ->setIsEnabled($isEnabled)
-               ->setDescription($description);
+        $config->setRoutePattern($routePattern);
+        $config->setTimeoutSeconds($timeoutSeconds);
+        $config->setIsEnabled($isEnabled);
+        $config->setDescription($description);
 
         $this->entityManager->persist($config);
         $this->entityManager->flush();
@@ -108,18 +117,18 @@ class IdleLockDetector
         ?string $routePattern = null,
         ?int $timeoutSeconds = null,
         ?bool $isEnabled = null,
-        ?string $description = null
+        ?string $description = null,
     ): LockConfiguration {
-        if ($routePattern !== null) {
+        if (null !== $routePattern) {
             $config->setRoutePattern($routePattern);
         }
-        if ($timeoutSeconds !== null) {
+        if (null !== $timeoutSeconds) {
             $config->setTimeoutSeconds($timeoutSeconds);
         }
-        if ($isEnabled !== null) {
+        if (null !== $isEnabled) {
             $config->setIsEnabled($isEnabled);
         }
-        if ($description !== null) {
+        if (null !== $description) {
             $config->setDescription($description);
         }
 
@@ -142,7 +151,7 @@ class IdleLockDetector
      */
     public function getConfigurationById(int $id): ?LockConfiguration
     {
-        return $this->entityManager->getRepository(LockConfiguration::class)->find($id);
+        return $this->lockConfigurationRepository->find($id);
     }
 
     /**
@@ -155,6 +164,7 @@ class IdleLockDetector
 
     /**
      * 获取匹配指定路由的所有配置
+     * @return LockConfiguration[]
      */
     public function getMatchingConfigurations(string $route): array
     {
@@ -172,18 +182,10 @@ class IdleLockDetector
 
     /**
      * 批量启用/禁用配置
+     * @param int[] $configIds
      */
     public function toggleConfigurations(array $configIds, bool $enabled): int
     {
-        $qb = $this->entityManager->createQueryBuilder();
-        $qb->update(LockConfiguration::class, 'lc')
-           ->set('lc.isEnabled', ':enabled')
-           ->set('lc.updatedAt', ':updatedAt')
-           ->where('lc.id IN (:ids)')
-           ->setParameter('enabled', $enabled)
-           ->setParameter('updatedAt', new \DateTimeImmutable())
-           ->setParameter('ids', $configIds);
-
-        return $qb->getQuery()->execute();
+        return $this->lockConfigurationRepository->toggleConfigurations($configIds, $enabled);
     }
 }

@@ -7,14 +7,13 @@ use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpKernel\Event\RequestEvent;
 use Symfony\Component\HttpKernel\KernelEvents;
 use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
-use Tourze\IdleLockScreenBundle\Service\IdleLockDetector;
 use Tourze\IdleLockScreenBundle\Service\LockManager;
 
 /**
  * 无操作锁定事件监听器
  * 在每个请求中检查锁定状态
  */
-class IdleLockListener implements EventSubscriberInterface
+class IdleLockEventSubscriber implements EventSubscriberInterface
 {
     private const EXCLUDED_ROUTES = [
         'idle_lock_timeout',
@@ -26,8 +25,7 @@ class IdleLockListener implements EventSubscriberInterface
 
     public function __construct(
         private readonly LockManager $lockManager,
-        private readonly IdleLockDetector $lockDetector,
-        private readonly UrlGeneratorInterface $urlGenerator
+        private readonly UrlGeneratorInterface $urlGenerator,
     ) {
     }
 
@@ -52,7 +50,7 @@ class IdleLockListener implements EventSubscriberInterface
         $pathInfo = $request->getPathInfo();
 
         // 跳过排除的路由
-        if ($this->isExcludedRoute($route, $pathInfo)) {
+        if ($this->isExcludedRoute(is_string($route) ? $route : null, $pathInfo)) {
             return;
         }
 
@@ -64,6 +62,7 @@ class IdleLockListener implements EventSubscriberInterface
         // 检查会话是否被锁定
         if ($this->lockManager->isSessionLocked()) {
             $this->handleLockedSession($event, $pathInfo);
+
             return;
         }
 
@@ -77,13 +76,13 @@ class IdleLockListener implements EventSubscriberInterface
     private function handleLockedSession(RequestEvent $event, string $pathInfo): void
     {
         $request = $event->getRequest();
-        
+
         // 记录绕过尝试
         $this->lockManager->recordBypassAttempt($pathInfo, $request->getMethod());
 
         // 重定向到锁定页面
         $lockUrl = $this->urlGenerator->generate('idle_lock_timeout', [
-            'redirect' => $request->getUri()
+            'redirect' => $request->getUri(),
         ]);
 
         $response = new RedirectResponse($lockUrl);
@@ -95,16 +94,34 @@ class IdleLockListener implements EventSubscriberInterface
      */
     private function isExcludedRoute(?string $route, string $pathInfo): bool
     {
-        // 检查路由名称
-        if ($route) {
-            foreach (self::EXCLUDED_ROUTES as $excludedRoute) {
-                if (str_starts_with($route, $excludedRoute)) {
-                    return true;
-                }
+        return $this->isExcludedRouteName($route)
+            || $this->isExcludedPath($pathInfo)
+            || $this->isStaticResource($pathInfo);
+    }
+
+    /**
+     * 检查是否为排除的路由名称
+     */
+    private function isExcludedRouteName(?string $route): bool
+    {
+        if (null === $route) {
+            return false;
+        }
+
+        foreach (self::EXCLUDED_ROUTES as $excludedRoute) {
+            if (str_starts_with($route, $excludedRoute)) {
+                return true;
             }
         }
 
-        // 检查路径
+        return false;
+    }
+
+    /**
+     * 检查是否为排除的路径
+     */
+    private function isExcludedPath(string $pathInfo): bool
+    {
         $excludedPaths = [
             '/idle-lock/',
             '/_profiler/',
@@ -119,12 +136,15 @@ class IdleLockListener implements EventSubscriberInterface
             }
         }
 
-        // 检查静态资源
-        if (preg_match('/\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$/i', $pathInfo)) {
-            return true;
-        }
-
         return false;
+    }
+
+    /**
+     * 检查是否为静态资源
+     */
+    private function isStaticResource(string $pathInfo): bool
+    {
+        return (bool) preg_match('/\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$/i', $pathInfo);
     }
 
     /**

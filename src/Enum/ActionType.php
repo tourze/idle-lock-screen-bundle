@@ -2,6 +2,7 @@
 
 namespace Tourze\IdleLockScreenBundle\Enum;
 
+use Tourze\EnumExtra\BadgeInterface;
 use Tourze\EnumExtra\Itemable;
 use Tourze\EnumExtra\ItemTrait;
 use Tourze\EnumExtra\Labelable;
@@ -11,10 +12,10 @@ use Tourze\EnumExtra\SelectTrait;
 /**
  * 锁定操作类型枚举
  */
-enum ActionType: string implements Labelable, Itemable, Selectable
+enum ActionType: string implements Labelable, Itemable, Selectable, BadgeInterface
 {
-    use ItemTrait;
     use SelectTrait;
+    use ItemTrait;
 
     case LOCKED = 'locked';
     case UNLOCKED = 'unlocked';
@@ -29,5 +30,25 @@ enum ActionType: string implements Labelable, Itemable, Selectable
             self::TIMEOUT => '超时',
             self::BYPASS_ATTEMPT => '绕过尝试',
         };
+    }
+
+    public function getBadgeColor(): string
+    {
+        return match ($this) {
+            self::LOCKED => 'danger',
+            self::UNLOCKED => 'success',
+            self::TIMEOUT => 'warning',
+            self::BYPASS_ATTEMPT => 'dark',
+        };
+    }
+
+    public function getBadgeLabel(): string
+    {
+        return $this->getLabel();
+    }
+
+    public function getBadge(): string
+    {
+        return $this->getBadgeColor();
     }
 }
