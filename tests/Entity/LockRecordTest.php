@@ -32,7 +32,7 @@ final class LockRecordTest extends AbstractEntityTestCase
         yield 'ipAddress' => ['ipAddress', '192.168.1.100'];
         yield 'userAgent' => ['userAgent', 'Mozilla/5.0 Test Browser'];
         yield 'context' => ['context', ['key' => 'value', 'number' => 42]];
-        yield 'user' => ['user', null]; // We'll handle stub creation in the test method
+        // user 属性为 UserInterface 类型，避免序列化问题，由专门的测试方法覆盖
     }
 
     public function testCanBeInstantiated(): void
