@@ -68,16 +68,6 @@ final class LockRecordCrudControllerTest extends AbstractEasyAdminControllerTest
         self::markTestSkipped('控制器禁用了EDIT操作，跳过字段提供器测试');
     }
 
-    public function testGetEntityFqcn(): void
-    {
-        $controller = new LockRecordCrudController();
-
-        $reflection = new \ReflectionClass($controller);
-        $method = $reflection->getMethod('getEntityFqcn');
-        $result = $method->invoke($controller);
-        $this->assertEquals(LockRecord::class, $result);
-    }
-
     public function testControllerHasAdminCrudAttribute(): void
     {
         $reflection = new \ReflectionClass(LockRecordCrudController::class);

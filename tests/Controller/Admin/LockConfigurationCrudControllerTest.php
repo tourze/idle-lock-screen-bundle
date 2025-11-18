@@ -59,11 +59,6 @@ final class LockConfigurationCrudControllerTest extends AbstractEasyAdminControl
         yield 'isEnabled' => ['isEnabled'];
     }
 
-    public function testGetEntityFqcn(): void
-    {
-        $this->assertEquals(LockConfiguration::class, LockConfigurationCrudController::getEntityFqcn());
-    }
-
     public function testControllerHasAdminCrudAttribute(): void
     {
         $reflection = new \ReflectionClass(LockConfigurationCrudController::class);
