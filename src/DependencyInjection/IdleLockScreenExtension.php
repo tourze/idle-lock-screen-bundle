@@ -4,7 +4,7 @@ namespace Tourze\IdleLockScreenBundle\DependencyInjection;
 
 use Tourze\SymfonyDependencyServiceLoader\AutoExtension;
 
-class IdleLockScreenExtension extends AutoExtension
+final class IdleLockScreenExtension extends AutoExtension
 {
     protected function getConfigDir(): string
     {

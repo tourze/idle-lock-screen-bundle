@@ -33,7 +33,6 @@ final class LockConfigurationRepositoryTest extends AbstractRepositoryTestCase
 
     protected function getRepository(): LockConfigurationRepository
     {
-        // @phpstan-ignore doctrine.noGetRepositoryOutsideService
         /** @var LockConfigurationRepository */
         return self::getEntityManager()->getRepository(LockConfiguration::class);
     }

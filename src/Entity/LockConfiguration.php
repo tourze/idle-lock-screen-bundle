@@ -22,7 +22,7 @@ class LockConfiguration implements \Stringable
     #[ORM\Id]
     #[ORM\GeneratedValue]
     #[ORM\Column(type: Types::INTEGER, options: ['comment' => '主键ID'])]
-    private ?int $id = null; // @phpstan-ignore-line property.unusedType (Doctrine auto-assigns after persist)
+    private ?int $id = null;
 
     #[ORM\Column(type: Types::STRING, length: 255, options: ['comment' => '路由模式，支持通配符和正则表达式'])]
     #[Assert\NotBlank(message: '路由模式不能为空')]
